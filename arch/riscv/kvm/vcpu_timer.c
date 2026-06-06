@@ -71,6 +71,15 @@ static int kvm_riscv_vcpu_timer_cancel(struct kvm_vcpu_timer *t)
 
 static int kvm_riscv_vcpu_update_vstimecmp(struct kvm_vcpu *vcpu, u64 ncycles)
 {
+	/*
+	 * Mirror kvm_riscv_vcpu_update_hrtimer (the non-sstc path):
+	 * update t->next_cycles, and then set hw CSR_VSTIMECMP.
+	 * Otherwise, a race condition with preemption can cause
+	 * CSR_VSTIMECMP to end up holding a stale value
+	 * (kvm_riscv_vcpu_timer_restore writes the old t->next_cycles
+	 * back into VSTIMECMP shmem on sched-in).
+	 */
+	vcpu->arch.timer.next_cycles = ncycles;
 #if defined(CONFIG_32BIT)
 	ncsr_write(CSR_VSTIMECMP, ncycles & 0xFFFFFFFF);
 	ncsr_write(CSR_VSTIMECMPH, ncycles >> 32);
