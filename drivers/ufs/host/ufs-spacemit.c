@@ -15,7 +15,6 @@
 #include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
-#include <scsi/scsi_device.h>
 
 #include <ufs/ufshcd.h>
 #include <ufs/ufs_quirks.h>
@@ -643,6 +642,7 @@ static void ufs_spacemit_advertise_quirks(struct ufs_hba *hba)
 {
 	/* break auto hibern8 */
 	hba->quirks |= UFSHCD_QUIRK_BROKEN_AUTO_HIBERN8;
+	hba->quirks |= UFSHCD_QUIRK_BROKEN_MIXED_DATA_DIR;
 }
 
 static void ufs_spacemit_set_caps(struct ufs_hba *hba)
@@ -660,23 +660,14 @@ static void ufs_spacemit_set_caps(struct ufs_hba *hba)
 	/* hba->caps |= UFSHCD_CAP_RPM_AUTOSUSPEND; */
 }
 
-static void ufs_spacemit_config_scsi_dev(struct scsi_device *sdev)
-{
-	struct ufs_hba *hba = shost_priv(sdev->host);
-
-	/* Serialize I/O to avoid command loss under high-concurrency stress. */
-	scsi_change_queue_depth(sdev, 1);
-	dev_info(hba->dev, "lu %llu scsi queue depth limited to %u\n",
-		 sdev->lun, sdev->queue_depth);
-}
-
 /**
  * ufs_spacemit_setup_xfer_req
  * @hba: host controller instance
- * tag: current task slot index
- * is_scsi_cmd: scsi command or not
+ * @tag: current task slot index
+ * @is_scsi_cmd: scsi command or not
  */
-static void ufs_spacemit_setup_xfer_req(struct ufs_hba *hba, int tag, bool is_scsi_cmd)
+static void ufs_spacemit_setup_xfer_req(struct ufs_hba *hba, int tag,
+					bool is_scsi_cmd)
 {
 	/*
 	 * Ensure UTRD/UPIU writes are visible before the core rings doorbell.
@@ -1216,7 +1207,6 @@ static const struct ufs_hba_variant_ops ufs_hba_spacemit_vops = {
 	.pwr_change_notify = ufs_spacemit_pwr_change_notify,
 	.setup_clocks = ufs_spacemit_setup_clocks,
 	.setup_xfer_req = ufs_spacemit_setup_xfer_req,
-	.config_scsi_dev = ufs_spacemit_config_scsi_dev,
 	.device_reset = ufs_spacemit_device_reset,
 	.event_notify = ufs_spacemit_event_notify,
 	.apply_dev_quirks = ufs_spacemit_apply_dev_quirks,

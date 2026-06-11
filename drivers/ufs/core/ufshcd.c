@@ -2348,18 +2348,59 @@ static void ufshcd_update_monitor(struct ufs_hba *hba, const struct ufshcd_lrb *
 	spin_unlock_irqrestore(hba->host->host_lock, flags);
 }
 
+static bool ufshcd_has_mixed_scsi_data_dir(struct ufs_hba *hba,
+					   unsigned int task_tag)
+{
+	struct scsi_cmnd *cmd = hba->lrb[task_tag].cmd;
+	int tag;
+
+	lockdep_assert_held(&hba->outstanding_lock);
+
+	if (!cmd || (cmd->sc_data_direction != DMA_TO_DEVICE &&
+		     cmd->sc_data_direction != DMA_FROM_DEVICE))
+		return false;
+
+	for_each_set_bit(tag, &hba->outstanding_reqs, hba->nutrs) {
+		struct scsi_cmnd *outstanding_cmd = hba->lrb[tag].cmd;
+
+		if (!outstanding_cmd)
+			continue;
+		if (cmd->sc_data_direction == DMA_TO_DEVICE &&
+		    outstanding_cmd->sc_data_direction == DMA_FROM_DEVICE)
+			return true;
+		if (cmd->sc_data_direction == DMA_FROM_DEVICE &&
+		    outstanding_cmd->sc_data_direction == DMA_TO_DEVICE)
+			return true;
+	}
+
+	return false;
+}
+
 /**
  * ufshcd_send_command - Send SCSI or device management commands
  * @hba: per adapter instance
  * @task_tag: Task tag of the command
  * @hwq: pointer to hardware queue instance
+ *
+ * Return: 0 if the command was submitted or -EBUSY if it must be requeued.
  */
-static inline
-void ufshcd_send_command(struct ufs_hba *hba, unsigned int task_tag,
-			 struct ufs_hw_queue *hwq)
+static inline int ufshcd_send_command(struct ufs_hba *hba,
+				      unsigned int task_tag,
+				      struct ufs_hw_queue *hwq)
 {
 	struct ufshcd_lrb *lrbp = &hba->lrb[task_tag];
 	unsigned long flags;
+	bool locked = false;
+
+	if (!hba->mcq_enabled &&
+	    (hba->quirks & UFSHCD_QUIRK_BROKEN_MIXED_DATA_DIR)) {
+		spin_lock_irqsave(&hba->outstanding_lock, flags);
+		locked = true;
+		if (ufshcd_has_mixed_scsi_data_dir(hba, task_tag)) {
+			spin_unlock_irqrestore(&hba->outstanding_lock, flags);
+			return -EBUSY;
+		}
+	}
 
 	if (hba->monitor.enabled) {
 		lrbp->issue_time_stamp = ktime_get();
@@ -2384,7 +2425,8 @@ void ufshcd_send_command(struct ufs_hba *hba, unsigned int task_tag,
 		ufshcd_inc_sq_tail(hwq);
 		spin_unlock(&hwq->sq_lock);
 	} else {
-		spin_lock_irqsave(&hba->outstanding_lock, flags);
+		if (!locked)
+			spin_lock_irqsave(&hba->outstanding_lock, flags);
 		if (hba->vops && hba->vops->setup_xfer_req)
 			hba->vops->setup_xfer_req(hba, lrbp->task_tag,
 						  !!lrbp->cmd);
@@ -2393,6 +2435,8 @@ void ufshcd_send_command(struct ufs_hba *hba, unsigned int task_tag,
 			      REG_UTP_TRANSFER_REQ_DOOR_BELL);
 		spin_unlock_irqrestore(&hba->outstanding_lock, flags);
 	}
+
+	return 0;
 }
 
 /**
@@ -3066,7 +3110,13 @@ static int ufshcd_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *cmd)
 	if (hba->mcq_enabled)
 		hwq = ufshcd_mcq_req_to_hwq(hba, scsi_cmd_to_rq(cmd));
 
-	ufshcd_send_command(hba, tag, hwq);
+	err = ufshcd_send_command(hba, tag, hwq);
+	if (err) {
+		scsi_dma_unmap(cmd);
+		ufshcd_crypto_clear_prdt(hba, lrbp);
+		ufshcd_release(hba);
+		err = SCSI_MLQUEUE_HOST_BUSY;
+	}
 
 out:
 	if (ufs_trigger_eh(hba)) {
@@ -3312,7 +3362,9 @@ static int ufshcd_issue_dev_cmd(struct ufs_hba *hba, struct ufshcd_lrb *lrbp,
 	int err;
 
 	ufshcd_add_query_upiu_trace(hba, UFS_QUERY_SEND, lrbp->ucd_req_ptr);
-	ufshcd_send_command(hba, tag, hba->dev_cmd_queue);
+	err = ufshcd_send_command(hba, tag, hba->dev_cmd_queue);
+	if (err)
+		return err;
 	err = ufshcd_wait_for_dev_cmd(hba, lrbp, timeout);
 
 	ufshcd_add_query_upiu_trace(hba, err ? UFS_QUERY_ERR : UFS_QUERY_COMP,
@@ -7785,7 +7837,15 @@ static int ufshcd_abort(struct scsi_cmnd *cmd)
 		dev_err(hba->dev,
 		"%s: cmd was completed, but without a notifying intr, tag = %d",
 		__func__, tag);
-		__ufshcd_transfer_req_compl(hba, 1UL << tag);
+
+		/* Complete the command once even if normal completion races with us. */
+		spin_lock_irqsave(&hba->outstanding_lock, flags);
+		outstanding = __test_and_clear_bit(tag,
+						   &hba->outstanding_reqs);
+		spin_unlock_irqrestore(&hba->outstanding_lock, flags);
+
+		if (outstanding)
+			__ufshcd_transfer_req_compl(hba, 1UL << tag);
 		goto release;
 	}
 
