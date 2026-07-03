@@ -30,13 +30,16 @@ int timestamp_enable(struct rvtrace_component *comp)
 }
 EXPORT_SYMBOL_GPL(timestamp_enable);
 
-void timestamp_disable(struct rvtrace_component *comp)
+int timestamp_disable(struct rvtrace_component *comp)
 {
 	u32 val;
 
 	val = readl_relaxed(comp->base + RVTRACE_TIMESTAMP_CTRL_OFFSET);
 	val &= ~(RVTRACE_TIMESTAMP_ENABLE | RVTRACE_TIMESTAMP_COUNT);
 	writel_relaxed(val, comp->base + RVTRACE_TIMESTAMP_CTRL_OFFSET);
+
+	return rvtrace_poll_bit(comp, RVTRACE_TIMESTAMP_CTRL_OFFSET,
+				RVTRACE_TIMESTAMP_ENABLE_SHIFT, 0);
 }
 EXPORT_SYMBOL_GPL(timestamp_disable);
 
@@ -107,11 +110,13 @@ static int rvtrace_timestamp_reset(struct rvtrace_component *comp)
 				RVTRACE_TIMESTAMP_ACTIVE_SHIFT, 1);
 }
 
-int rvtrace_init_timestamp(struct rvtrace_component *comp,
-			   struct timestamp_config *config)
+int rvtrace_init_timestamp(struct rvtrace_component *comp)
 {
 	u32 val;
 	int ret;
+	struct timestamp_config *config = timestamp_get_config(comp);
+	if (!config)
+		return -EINVAL;
 
 	val = readl_relaxed(comp->base + RVTRACE_TIMESTAMP_CTRL_OFFSET);
 	if (!FIELD_GET(RVTRACE_TIMESTAMP_ACTIVE, val)) {

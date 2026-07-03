@@ -251,6 +251,9 @@ static int funnel_probe(struct platform_device *pdev)
 	if (!funnel_data)
 		return -ENOMEM;
 
+	/* Set component data before registration so is_visible callbacks can access it */
+	comp->id.data = funnel_data;
+
 	spin_lock_init(&funnel_data->spinlock);
 
 	pdata = coresight_get_platform_data(dev);
@@ -263,7 +266,7 @@ static int funnel_probe(struct platform_device *pdev)
 	/* Check if funnel has timestamp component from device tree */
 	funnel_data->has_timestamp = fwnode_property_present(dev->fwnode, "riscv,timestamp-present");
 	if (funnel_data->has_timestamp) {
-		if (rvtrace_init_timestamp(comp, &funnel_data->ts_config)) {
+		if (rvtrace_init_timestamp(comp)) {
 			dev_err(dev, "Timestamp initialization failed\n");
 			return -EINVAL;
 		}
@@ -275,9 +278,6 @@ static int funnel_probe(struct platform_device *pdev)
 		 */
 		funnel_data->ts_ctrl = true;
 	}
-
-	/* Set component data before registration so is_visible callbacks can access it */
-	comp->id.data = funnel_data;
 
 	desc.name = coresight_alloc_device_name(&funnel_devs, dev);
 	desc.access = CSDEV_ACCESS_IOMEM(comp->base);

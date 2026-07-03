@@ -89,9 +89,15 @@ struct rvtrace_component {
 	bool was_reset;
 };
 
-struct component_enable_arg {
+struct component_arg {
 	struct rvtrace_component *comp;
 	int rc;
+};
+
+struct component_reg {
+	struct rvtrace_component *comp;
+	u32 offset;
+	u32 data;
 };
 
 struct rvtrace_component *rvtrace_register_component(struct platform_device *pdev);

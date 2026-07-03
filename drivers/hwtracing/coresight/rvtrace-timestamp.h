@@ -54,11 +54,10 @@ struct rvtrace_component;
 
 /* Timestamp control functions */
 int timestamp_enable(struct rvtrace_component *comp);
-void timestamp_disable(struct rvtrace_component *comp);
+int timestamp_disable(struct rvtrace_component *comp);
 struct timestamp_config *timestamp_get_config(struct rvtrace_component *comp);
 void timestamp_set_config(struct rvtrace_component *comp, struct device *dev,
 			  struct timestamp_config *config);
-int rvtrace_init_timestamp(struct rvtrace_component *comp,
-			   struct timestamp_config *config);
+int rvtrace_init_timestamp(struct rvtrace_component *comp);
 
 #endif

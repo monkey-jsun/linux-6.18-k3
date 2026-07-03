@@ -10,6 +10,65 @@
 #include "rvtrace-timestamp.h"
 #include "coresight-priv.h"
 
+static void do_smp_cross_read(void *data)
+{
+	struct component_reg *reg = data;
+	reg->data = readl_relaxed(reg->comp->base + reg->offset);
+}
+
+static u32 rvtrace_cross_read(struct rvtrace_component *comp, u32 offset)
+{
+	struct component_reg reg;
+
+	reg.comp = comp;
+	reg.offset = offset;
+	/*
+	 * smp cross call ensures the CPU will be powered up before
+	 * accessing the RISC-V trace core registers
+	 */
+	smp_call_function_single(comp->cpu, do_smp_cross_read, &reg, 1);
+	return reg.data;
+}
+
+static u32 rvtrace_attr_to_offset(struct device_attribute *attr)
+{
+	struct dev_ext_attribute *eattr;
+
+	eattr = container_of(attr, struct dev_ext_attribute, attr);
+	return (u32)(unsigned long)eattr->var;
+}
+
+static ssize_t rvtrace_reg_show(struct device *dev,
+				struct device_attribute *attr,
+				char *buf)
+{
+	u32 val, offset;
+	struct rvtrace_component *comp = dev_get_drvdata(dev->parent);
+
+	offset = rvtrace_attr_to_offset(attr);
+
+	val = rvtrace_cross_read(comp, offset);
+
+	return scnprintf(buf, PAGE_SIZE, "0x%x\n", val);
+}
+
+/*
+ * Macro to set an RO ext attribute with offset and show function.
+ */
+#define rvtrace_reg_showfn(name, offset, showfn) (	    \
+	&((struct dev_ext_attribute[]) {		    \
+	   {						    \
+		__ATTR(name, 0444, showfn, NULL),	    \
+		(void *)(unsigned long)offset		    \
+	   }						    \
+	})[0].attr.attr					    \
+	)
+
+/* macro using the default rvtrace_reg_show function */
+#define rvtrace_reg(name, offset)	\
+	rvtrace_reg_showfn(name, offset, rvtrace_reg_show)
+
+
 static ssize_t cpu_show(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {
@@ -21,26 +80,41 @@ static ssize_t cpu_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(cpu);
 
+static void rvtrace_component_reset_smp_call(void *info)
+{
+	struct component_arg *arg = info;
+	struct rvtrace_component *comp = arg->comp;
+
+	arg->rc = rvtrace_component_reset(comp);
+}
+
 static ssize_t reset_store(struct device *dev,
 			   struct device_attribute *attr,
 			   const char *buf, size_t size)
 {
+	int ret;
 	unsigned long val;
 	struct rvtrace_component *comp = dev_get_drvdata(dev->parent);
 	struct encoder_data *encoder_data = rvtrace_component_data(comp);
+	struct component_arg arg = { };
 
 	if (kstrtoul(buf, 16, &val))
 		return -EINVAL;
 
+	arg.comp = comp;
+
 	spin_lock(&encoder_data->spinlock);
 
 	if (val) {
-		encoder_set_default(comp);
-		if (rvtrace_component_reset(comp)) {
+		ret = smp_call_function_single(comp->cpu, rvtrace_component_reset_smp_call, &arg, 1);
+		if (!ret)
+			ret = arg.rc;
+		if (ret) {
 			comp->was_reset = false;
 			spin_unlock(&encoder_data->spinlock);
 			return -EINVAL;
 		}
+		encoder_set_default(comp);
 	}
 
 	spin_unlock(&encoder_data->spinlock);
@@ -85,9 +159,9 @@ static struct attribute *trace_encoder_attrs[] = {
 };
 
 static struct attribute *trace_encoder_mgmt_attrs[] = {
-	coresight_simple_reg32(control, RVTRACE_COMPONENT_CTRL_OFFSET),
-	coresight_simple_reg32(impl, RVTRACE_COMPONENT_IMPL_OFFSET),
-	coresight_simple_reg32(features, RVTRACE_ENCODER_INST_FTRS_OFFSET),
+	rvtrace_reg(control, RVTRACE_COMPONENT_CTRL_OFFSET),
+	rvtrace_reg(impl, RVTRACE_COMPONENT_IMPL_OFFSET),
+	rvtrace_reg(features, RVTRACE_ENCODER_INST_FTRS_OFFSET),
 	NULL,
 };
 
@@ -140,7 +214,7 @@ static ssize_t instmode_show(struct device *dev,
 	unsigned long val;
 	struct rvtrace_component *comp = dev_get_drvdata(dev->parent);
 
-	val = readl_relaxed(comp->base + RVTRACE_COMPONENT_CTRL_OFFSET);
+	val = rvtrace_cross_read(comp, RVTRACE_COMPONENT_CTRL_OFFSET);
 	val = BMVAL(val, 4, 6);
 
 	return sysfs_emit(buf, "%s\n", instmodes_str[val]);
@@ -204,7 +278,7 @@ static ssize_t format_show(struct device *dev,
 	unsigned long val;
 	struct rvtrace_component *comp = dev_get_drvdata(dev->parent);
 
-	val = readl_relaxed(comp->base + RVTRACE_COMPONENT_CTRL_OFFSET);
+	val = rvtrace_cross_read(comp, RVTRACE_COMPONENT_CTRL_OFFSET);
 	val = BMVAL(val, 24, 26);
 
 	return scnprintf(buf, PAGE_SIZE, "%#lx\n", val);

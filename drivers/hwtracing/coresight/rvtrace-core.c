@@ -68,6 +68,29 @@ int rvtrace_component_reset(struct rvtrace_component *comp)
 }
 EXPORT_SYMBOL_GPL(rvtrace_component_reset);
 
+static void rvtrace_component_id_smp_call(void *info)
+{
+	u32 impl, type, major, minor;
+	struct component_arg *arg = info;
+	struct rvtrace_component *comp = arg->comp;
+
+	arg->rc = rvtrace_component_reset(comp);
+	if (arg->rc)
+		return;
+	comp->was_reset = true;
+
+	impl = readl_relaxed(comp->base + RVTRACE_COMPONENT_IMPL_OFFSET);
+	type = (impl >> RVTRACE_COMPONENT_IMPL_TYPE_SHIFT) &
+		RVTRACE_COMPONENT_IMPL_TYPE_MASK;
+	major = (impl >> RVTRACE_COMPONENT_IMPL_VERMAJOR_SHIFT) &
+		RVTRACE_COMPONENT_IMPL_VERMAJOR_MASK;
+	minor = (impl >> RVTRACE_COMPONENT_IMPL_VERMINOR_SHIFT) &
+		RVTRACE_COMPONENT_IMPL_VERMINOR_MASK;
+
+	comp->id.type = type;
+	comp->id.version = rvtrace_component_mkversion(major, minor);
+}
+
 struct rvtrace_component *rvtrace_register_component(struct platform_device *pdev)
 {
 	int ret;
@@ -76,7 +99,7 @@ struct rvtrace_component *rvtrace_register_component(struct platform_device *pde
 	struct rvtrace_component *comp;
 	struct resource *res;
 	struct device_node *node;
-	u32 impl, type, major, minor;
+	struct component_arg arg = { };
 
 	comp = devm_kzalloc(dev, sizeof(*comp), GFP_KERNEL);
 	if (!comp) {
@@ -111,23 +134,27 @@ struct rvtrace_component *rvtrace_register_component(struct platform_device *pde
 		goto err_out;
 	}
 
-	ret = rvtrace_component_reset(comp);
-	if (ret)
-		goto err_out;
-	comp->was_reset = true;
+	cpus_read_lock();
+	arg.comp = comp;
+	if (comp->cpu >= 0) {
+		ret = smp_call_function_single(comp->cpu, rvtrace_component_id_smp_call, &arg, 1);
+		if (!ret)
+			ret = arg.rc;
+		if (ret) {
+			cpus_read_unlock();
+			goto err_out;
+		}
+	} else {
+		rvtrace_component_id_smp_call(&arg);
+		if (arg.rc) {
+			ret = arg.rc;
+			cpus_read_unlock();
+			goto err_out;
+		}
+	}
+	cpus_read_unlock();
 
-	impl = readl_relaxed(comp->base + RVTRACE_COMPONENT_IMPL_OFFSET);
-	type = (impl >> RVTRACE_COMPONENT_IMPL_TYPE_SHIFT) &
-		RVTRACE_COMPONENT_IMPL_TYPE_MASK;
-	major = (impl >> RVTRACE_COMPONENT_IMPL_VERMAJOR_SHIFT) &
-		RVTRACE_COMPONENT_IMPL_VERMAJOR_MASK;
-	minor = (impl >> RVTRACE_COMPONENT_IMPL_VERMINOR_SHIFT) &
-		RVTRACE_COMPONENT_IMPL_VERMINOR_MASK;
-
-	comp->id.type = type;
-	comp->id.version = rvtrace_component_mkversion(major, minor);
-
-	if (type == RVTRACE_COMPONENT_TYPE_ENCODER && comp->cpu < 0) {
+	if (comp->id.type == RVTRACE_COMPONENT_TYPE_ENCODER && comp->cpu < 0) {
 		ret = -EINVAL;
 		goto err_out;
 	}

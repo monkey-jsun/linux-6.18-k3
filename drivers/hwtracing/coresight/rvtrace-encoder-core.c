@@ -203,9 +203,9 @@ static int encoder_enable_hw(struct rvtrace_component *comp)
 	if (encoder_data->has_timestamp && encoder_data->ts_ctrl) {
 		ret = timestamp_enable(comp);
 		if (ret) {
+			/* Don't fail encoder enable if timestamp fails */
 			dev_warn(&encoder_data->csdev->dev,
-				 "Failed to enable timestamp\n");
-			ret = 0;  /* Don't fail encoder enable if timestamp fails */
+				 "Failed to disable timestamp\n");
 		}
 	}
 
@@ -223,7 +223,7 @@ done:
 
 static void encoder_enable_hw_smp_call(void *info)
 {
-	struct component_enable_arg *arg = info;
+	struct component_arg *arg = info;
 
 	if (WARN_ON(!arg))
 		return;
@@ -244,7 +244,7 @@ static int encoder_enable_sysfs(struct coresight_device *csdev)
 {
 	struct rvtrace_component *comp = dev_get_drvdata(csdev->dev.parent);
 	struct encoder_data *encoder_data = rvtrace_component_data(comp);
-	struct component_enable_arg arg = { };
+	struct component_arg arg = { };
 	int ret;
 
 	spin_lock(&encoder_data->spinlock);
@@ -296,51 +296,68 @@ static int encoder_enable(struct coresight_device *csdev, struct perf_event *eve
 	return ret;
 }
 
-static void encoder_disable_hw(struct rvtrace_component *comp)
+static int encoder_disable_hw(struct rvtrace_component *comp)
 {
+	int ret;
 	struct encoder_data *encoder_data = rvtrace_component_data(comp);
 
 	/* Disable timestamp only if encoder has timestamp component */
-	if (encoder_data->has_timestamp && encoder_data->ts_ctrl)
-		timestamp_disable(comp);
+	if (encoder_data->has_timestamp && encoder_data->ts_ctrl) {
+		ret = timestamp_disable(comp);
+		if (ret) {
+			/* Don't fail encoder disable if timestamp fails */
+			dev_warn(&encoder_data->csdev->dev,
+				 "Failed to enable timestamp\n");
+		}
+	}
 
-	if (rvtrace_disable_component(comp))
+	ret = rvtrace_disable_component(comp);
+	if (ret) {
 		dev_err(&encoder_data->csdev->dev,
 			"timeout while waiting for Trace Encoder become disabled\n");
+		goto done;
+	}
 
-	if (rvtrace_comp_is_empty(comp))
+	ret = rvtrace_comp_is_empty(comp);
+	if (ret)
 		dev_err(&encoder_data->csdev->dev,
 			"timeout while waiting for all generated trace have been emitted\n");
 
-	dev_dbg(&encoder_data->csdev->dev, "cpu: %d disable smp call done\n", comp->cpu);
+done:
+	dev_dbg(&encoder_data->csdev->dev, "cpu: %d disable smp call done: %d\n", comp->cpu, ret);
+	return ret;
 }
 
-static void encoder_disable_sysfs_smp_call(void *info)
+static void encoder_disable_hw_smp_call(void *info)
 {
-	struct rvtrace_component *comp = info;
+	struct component_arg *arg = info;
 
-	encoder_disable_hw(comp);
+	if (WARN_ON(!arg))
+		return;
+	arg->rc = encoder_disable_hw(arg->comp);
 }
 
 static void encoder_disable_sysfs(struct coresight_device *csdev)
 {
 	struct rvtrace_component *comp = dev_get_drvdata(csdev->dev.parent);
 	struct encoder_data *encoder_data = rvtrace_component_data(comp);
+	struct component_arg arg = { };
 
-        /*
-         * Taking hotplug lock here protects from clocks getting disabled
-         * with tracing being left on (crash scenario) if user disable occurs
-         * after cpu online mask indicates the cpu is offline but before the
-         * DYING hotplug callback is serviced by the trace encoder driver.
-         */
+	/*
+	 * Taking hotplug lock here protects from clocks getting disabled
+	 * with tracing being left on (crash scenario) if user disable occurs
+	 * after cpu online mask indicates the cpu is offline but before the
+	 * DYING hotplug callback is serviced by the trace encoder driver.
+	 */
         cpus_read_lock();
         spin_lock(&encoder_data->spinlock);
 
-        /*
-         * Executing encoder_disable_hw on the cpu whose trace encoder is being
-         * disabled ensures that register writes occur when cpu is powered.
-         */
-	smp_call_function_single(comp->cpu, encoder_disable_sysfs_smp_call, comp, 1);
+	/*
+	 * Executing encoder_disable_hw on the cpu whose trace encoder is being
+	 * disabled ensures that register writes occur when cpu is powered.
+	 */
+	arg.comp = comp;
+	smp_call_function_single(comp->cpu, encoder_disable_hw_smp_call, &arg, 1);
 
 	spin_unlock(&encoder_data->spinlock);
 	cpus_read_unlock();
@@ -425,6 +442,15 @@ void encoder_set_default(struct rvtrace_component *comp)
 	config->srcb = 0xc;
 }
 
+static void rvtrace_init_timestamp_smp_call(void *info)
+{
+	struct component_arg *arg = info;
+
+	if (WARN_ON(!arg))
+		return;
+	arg->rc = rvtrace_init_timestamp(arg->comp);
+}
+
 static int encoder_probe(struct platform_device *pdev)
 {
 	int ret;
@@ -433,6 +459,7 @@ static int encoder_probe(struct platform_device *pdev)
 	struct encoder_data *encoder_data;
 	struct rvtrace_component *comp;
 	struct coresight_desc desc = { 0 };
+	struct component_arg arg = { 0 };
 
 	comp = rvtrace_register_component(pdev);
 	if (IS_ERR(comp))
@@ -441,6 +468,9 @@ static int encoder_probe(struct platform_device *pdev)
 	encoder_data = devm_kzalloc(dev, sizeof(*encoder_data), GFP_KERNEL);
 	if (!encoder_data)
 		return -ENOMEM;
+
+	/* Set component data before registration so is_visible callbacks can access it */
+	comp->id.data = encoder_data;
 
 	spin_lock_init(&encoder_data->spinlock);
 
@@ -454,10 +484,17 @@ static int encoder_probe(struct platform_device *pdev)
 	/* Check if encoder has timestamp component from device tree early */
 	encoder_data->has_timestamp = fwnode_property_present(dev->fwnode, "riscv,timestamp-present");
 	if (encoder_data->has_timestamp) {
-		if (rvtrace_init_timestamp(comp, &encoder_data->ts_config)) {
+		arg.comp = comp;
+		cpus_read_lock();
+		ret = smp_call_function_single(comp->cpu, rvtrace_init_timestamp_smp_call, &arg, 1);
+		if (!ret)
+			ret = arg.rc;
+		if (ret) {
+			cpus_read_unlock();
 			dev_err(dev, "Timestamp initialization failed\n");
 			return -EINVAL;
 		}
+		cpus_read_unlock();
 
 		/* TODO: Default to enabling timestamp control if present, as
 		 * encoder_data->ts_ctrl can be configured via sysfs attribute,
@@ -466,9 +503,6 @@ static int encoder_probe(struct platform_device *pdev)
 		 */
 		encoder_data->ts_ctrl = true;
 	}
-
-	/* Set component data before registration so is_visible callbacks can access it */
-	comp->id.data = encoder_data;
 
 	desc.name = devm_kasprintf(dev, GFP_KERNEL, "encoder%d", comp->cpu);
 	if (!desc.name)
@@ -517,7 +551,6 @@ static void encoder_remove(struct platform_device *pdev)
 {
 	struct rvtrace_component *comp = platform_get_drvdata(pdev);
 	struct encoder_data *encoder_data = rvtrace_component_data(comp);
-	struct device *dev = &pdev->dev;
 
 	etm_perf_symlink(encoder_data->csdev, false);
 
