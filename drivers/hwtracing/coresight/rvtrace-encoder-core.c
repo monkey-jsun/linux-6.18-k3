@@ -16,6 +16,7 @@
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
+#include <linux/cpuhotplug.h>
 #include <linux/rvtrace.h>
 
 #include "rvtrace-encoder.h"
@@ -24,6 +25,9 @@
 
 static int boot_enable;
 module_param_named(boot_enable, boot_enable, int, S_IRUGO);
+
+/* power management handling */
+static int nr_encoder_cpu;
 
 static struct rvtrace_component *rvtrace_cpu_encoder[NR_CPUS];
 
@@ -191,6 +195,7 @@ static int encoder_enable_hw(struct rvtrace_component *comp)
 		ret = rvtrace_component_reset(comp);
 		if (ret)
 			goto done;
+		comp->was_reset = true;
 	}
 
 	encoder_set_config(comp);
@@ -415,6 +420,65 @@ static const struct coresight_ops encoder_cs_ops = {
 	.source_ops     = &encoder_source_ops,
 };
 
+static int encoder_starting_cpu(unsigned int cpu)
+{
+	struct rvtrace_component *comp = rvtrace_cpu_encoder[cpu];
+	struct encoder_data *encoder_data = rvtrace_component_data(comp);
+	int ret = 0;
+
+	spin_lock(&encoder_data->spinlock);
+	if (coresight_get_mode(encoder_data->csdev))
+		ret = encoder_enable_hw(comp);
+	spin_unlock(&encoder_data->spinlock);
+	return ret;
+}
+
+static int encoder_dying_cpu(unsigned int cpu)
+{
+	struct rvtrace_component *comp = rvtrace_cpu_encoder[cpu];
+	struct encoder_data *encoder_data = rvtrace_component_data(comp);
+	int ret = 0;
+
+	spin_lock(&encoder_data->spinlock);
+	if (coresight_get_mode(encoder_data->csdev))
+		ret = encoder_disable_hw(comp);
+	spin_unlock(&encoder_data->spinlock);
+	comp->was_reset = false;
+	return ret;
+}
+
+static int encoder_pm_setup(struct rvtrace_component *comp)
+{
+	int ret;
+
+	if (comp->cpu == -1)
+		return 0;
+
+	if (nr_encoder_cpu)
+		goto done;
+
+	ret = cpuhp_setup_state_nocalls(
+			CPUHP_AP_RISCV_TRACE_ENCODER_STARTING,
+			"riscv/trace_encoder:starting",
+			encoder_starting_cpu, encoder_dying_cpu);
+	if (ret) {
+		return ret;
+
+done:
+	nr_encoder_cpu++;
+	rvtrace_cpu_encoder[comp->cpu] = comp;
+	return 0;
+}
+
+static void encoder_pm_release(struct rvtrace_component *comp)
+{
+	if (comp->cpu == -1)
+		return;
+
+	if (--nr_encoder_cpu == 0)
+		cpuhp_remove_state_nocalls(CPUHP_AP_RISCV_TRACE_ENCODER_STARTING);
+}
+
 void encoder_set_default(struct rvtrace_component *comp)
 {
 	struct encoder_data *encoder_data = rvtrace_component_data(comp);
@@ -519,13 +583,19 @@ static int encoder_probe(struct platform_device *pdev)
 	if (IS_ERR(encoder_data->csdev))
 		return PTR_ERR(encoder_data->csdev);
 
-	ret = etm_perf_symlink(encoder_data->csdev, true);
+	/* setup CPU power management handling for CPU bound encoder devices. */
+	ret = encoder_pm_setup(comp);
 	if (ret) {
 		coresight_unregister(encoder_data->csdev);
 		return ret;
 	}
 
-	rvtrace_cpu_encoder[comp->cpu] = comp;
+	ret = etm_perf_symlink(encoder_data->csdev, true);
+	if (ret) {
+		encoder_pm_release(comp);
+		coresight_unregister(encoder_data->csdev);
+		return ret;
+	}
 
 	encoder_set_default(comp);
 
@@ -572,6 +642,7 @@ static void encoder_remove(struct platform_device *pdev)
 
 	cpus_read_unlock();
 
+	encoder_pm_release(comp);
 	coresight_unregister(encoder_data->csdev);
 }
 
