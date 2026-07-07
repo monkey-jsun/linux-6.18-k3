@@ -167,17 +167,6 @@ static ssize_t reset_store(struct device *dev,
 }
 static DEVICE_ATTR_WO(reset);
 
-static ssize_t cpu_show(struct device *dev,
-			struct device_attribute *attr, char *buf)
-{
-	unsigned long val;
-	struct rvtrace_component *comp = dev_get_drvdata(dev->parent);
-
-	val = comp->cpu;
-	return scnprintf(buf, PAGE_SIZE, "%#lx\n", val);
-}
-static DEVICE_ATTR_RO(cpu);
-
 static ssize_t ts_ctrl_show(struct device *dev,
 			   struct device_attribute *attr, char *buf)
 {
@@ -211,7 +200,6 @@ static struct attribute *trace_funnel_attrs[] = {
 	coresight_simple_reg32(impl, RVTRACE_COMPONENT_IMPL_OFFSET),
 	coresight_simple_reg32(disinput, RVTRACE_FUNNEL_DISINPUT_OFFSET),
 	&dev_attr_reset.attr,
-	&dev_attr_cpu.attr,
 	&dev_attr_ts_ctrl.attr,
 	NULL,
 };
