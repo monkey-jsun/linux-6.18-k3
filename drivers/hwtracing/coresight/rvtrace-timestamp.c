@@ -93,7 +93,7 @@ void timestamp_set_config(struct rvtrace_component *comp, struct device *dev,
 }
 EXPORT_SYMBOL_GPL(timestamp_set_config);
 
-static int rvtrace_timestamp_reset(struct rvtrace_component *comp)
+int rvtrace_timestamp_reset(struct rvtrace_component *comp)
 {
 	int ret;
 
@@ -109,6 +109,7 @@ static int rvtrace_timestamp_reset(struct rvtrace_component *comp)
 	return rvtrace_poll_bit(comp, RVTRACE_TIMESTAMP_CTRL_OFFSET,
 				RVTRACE_TIMESTAMP_ACTIVE_SHIFT, 1);
 }
+EXPORT_SYMBOL_GPL(rvtrace_timestamp_reset);
 
 int rvtrace_init_timestamp(struct rvtrace_component *comp)
 {

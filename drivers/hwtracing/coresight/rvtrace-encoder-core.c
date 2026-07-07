@@ -17,6 +17,7 @@
 #include <linux/platform_device.h>
 #include <linux/property.h>
 #include <linux/cpuhotplug.h>
+#include <linux/cpu_pm.h>
 #include <linux/rvtrace.h>
 
 #include "rvtrace-encoder.h"
@@ -25,6 +26,15 @@
 
 static int boot_enable;
 module_param_named(boot_enable, boot_enable, int, S_IRUGO);
+
+#define PARAM_PM_SAVE_FIRMWARE	  0 /* save self-hosted state as per firmware */
+#define PARAM_PM_SAVE_NEVER	  1 /* never save any state */
+#define PARAM_PM_SAVE_SELF_HOSTED 2 /* save self-hosted state only */
+
+static int pm_save_enable = PARAM_PM_SAVE_FIRMWARE;
+module_param(pm_save_enable, int, 0444);
+MODULE_PARM_DESC(pm_save_enable,
+	"Save/restore state on power down: 1 = never, 2 = self-hosted");
 
 /* power management handling */
 static int nr_encoder_cpu;
@@ -420,6 +430,111 @@ static const struct coresight_ops encoder_cs_ops = {
 	.source_ops     = &encoder_source_ops,
 };
 
+static int _encoder_cpu_save(struct rvtrace_component *comp)
+{
+	struct encoder_data *encoder_data = rvtrace_component_data(comp);
+	struct encoder_save_state *state = encoder_data->save_state;
+	state->control = readl_relaxed(comp->base + RVTRACE_COMPONENT_CTRL_OFFSET);
+	state->features = readl_relaxed(comp->base + RVTRACE_ENCODER_INST_FTRS_OFFSET);
+	if (encoder_data->has_timestamp && encoder_data->ts_ctrl)
+		state->ts_control = readl_relaxed(comp->base + RVTRACE_TIMESTAMP_CTRL_OFFSET);
+	return 0;
+}
+
+static int encoder_cpu_save(struct rvtrace_component *comp)
+{
+	struct encoder_data *encoder_data = rvtrace_component_data(comp);
+	if (encoder_data->save_state)
+		return _encoder_cpu_save(comp);
+	return 0;
+}
+
+static int _encoder_cpu_restore(struct rvtrace_component *comp)
+{
+	int ret;
+	int active_bit, enable_bit;
+	u32 val;
+	struct encoder_data *encoder_data = rvtrace_component_data(comp);
+	struct encoder_save_state *state = encoder_data->save_state;
+
+	active_bit = (state->control >> RVTRACE_COMPONENT_CTRL_ACTIVE_SHIFT) & 0x1;
+	enable_bit = (state->control >> RVTRACE_COMPONENT_CTRL_ENABLE_SHIFT) & 0X1;
+
+	val = readl_relaxed(comp->base + RVTRACE_COMPONENT_CTRL_OFFSET);
+	if (((val >> RVTRACE_COMPONENT_CTRL_ACTIVE_SHIFT) & 0x1) != active_bit) {
+		ret = rvtrace_component_reset(comp);
+		if (ret)
+			return ret;
+	}
+
+	if (((val >> RVTRACE_COMPONENT_CTRL_ENABLE_SHIFT) & 0x1) != enable_bit) {
+		ret = rvtrace_enable_component(comp);
+		if (ret)
+			return ret;
+	}
+
+	if (encoder_data->has_timestamp && encoder_data->ts_ctrl) {
+		active_bit = (state->ts_control >> RVTRACE_COMPONENT_CTRL_ACTIVE_SHIFT) & 0x1;
+		val = readl_relaxed(comp->base + RVTRACE_TIMESTAMP_CTRL_OFFSET);
+		if (((val >> RVTRACE_COMPONENT_CTRL_ACTIVE_SHIFT) & 0x1) != active_bit) {
+			ret = rvtrace_timestamp_reset(comp);
+			if (ret)
+				dev_err(&encoder_data->csdev->dev,
+					"Timestamp reset failed\n");
+		}
+	}
+
+	writel_relaxed(state->ts_control, comp->base + RVTRACE_TIMESTAMP_CTRL_OFFSET);
+	writel_relaxed(state->features, comp->base + RVTRACE_ENCODER_INST_FTRS_OFFSET);
+	writel_relaxed(state->control, comp->base + RVTRACE_COMPONENT_CTRL_OFFSET);
+
+	return 0;
+}
+
+static int encoder_cpu_restore(struct rvtrace_component *comp)
+{
+	struct encoder_data *encoder_data = rvtrace_component_data(comp);
+	if (encoder_data->save_state)
+		return _encoder_cpu_restore(comp);
+	return 0;
+}
+
+/** encoder PM callbacks **/
+static int encoder_cpu_pm_notify(struct notifier_block *nb, unsigned long cmd,
+			     void *v)
+{
+	struct rvtrace_component *comp;
+	unsigned int cpu = smp_processor_id();
+
+	if (!rvtrace_cpu_encoder[cpu])
+		return NOTIFY_OK;
+
+	comp = rvtrace_cpu_encoder[cpu];
+
+	if (WARN_ON_ONCE(comp->cpu != cpu))
+		return NOTIFY_BAD;
+
+	switch (cmd) {
+	case CPU_PM_ENTER:
+		if (encoder_cpu_save(comp))
+			return NOTIFY_BAD;
+		break;
+	case CPU_PM_EXIT:
+	case CPU_PM_ENTER_FAILED:
+		if (encoder_cpu_restore(comp))
+			return NOTIFY_BAD;
+		break;
+	default:
+		return NOTIFY_DONE;
+	}
+
+	return NOTIFY_OK;
+}
+
+static struct notifier_block encoder_cpu_pm_nb = {
+	.notifier_call = encoder_cpu_pm_notify,
+};
+
 static int encoder_starting_cpu(unsigned int cpu)
 {
 	struct rvtrace_component *comp = rvtrace_cpu_encoder[cpu];
@@ -457,12 +572,18 @@ static int encoder_pm_setup(struct rvtrace_component *comp)
 	if (nr_encoder_cpu)
 		goto done;
 
+	ret = cpu_pm_register_notifier(&encoder_cpu_pm_nb);
+	if (ret)
+		return ret;
+
 	ret = cpuhp_setup_state_nocalls(
 			CPUHP_AP_RISCV_TRACE_ENCODER_STARTING,
 			"riscv/trace_encoder:starting",
 			encoder_starting_cpu, encoder_dying_cpu);
 	if (ret) {
+		cpu_pm_unregister_notifier(&encoder_cpu_pm_nb);
 		return ret;
+	}
 
 done:
 	nr_encoder_cpu++;
@@ -475,8 +596,10 @@ static void encoder_pm_release(struct rvtrace_component *comp)
 	if (comp->cpu == -1)
 		return;
 
-	if (--nr_encoder_cpu == 0)
+	if (--nr_encoder_cpu == 0) {
+		cpu_pm_unregister_notifier(&encoder_cpu_pm_nb);
 		cpuhp_remove_state_nocalls(CPUHP_AP_RISCV_TRACE_ENCODER_STARTING);
+	}
 }
 
 void encoder_set_default(struct rvtrace_component *comp)
@@ -532,6 +655,17 @@ static int encoder_probe(struct platform_device *pdev)
 	encoder_data = devm_kzalloc(dev, sizeof(*encoder_data), GFP_KERNEL);
 	if (!encoder_data)
 		return -ENOMEM;
+
+	if (pm_save_enable == PARAM_PM_SAVE_FIRMWARE)
+		pm_save_enable = rvtrace_loses_context_with_cpu(dev) ?
+				PARAM_PM_SAVE_SELF_HOSTED : PARAM_PM_SAVE_NEVER;
+
+	if (pm_save_enable != PARAM_PM_SAVE_NEVER) {
+		encoder_data->save_state = devm_kmalloc(dev,
+				sizeof(struct encoder_save_state), GFP_KERNEL);
+		if (!encoder_data->save_state)
+			return -ENOMEM;
+	}
 
 	/* Set component data before registration so is_visible callbacks can access it */
 	comp->id.data = encoder_data;

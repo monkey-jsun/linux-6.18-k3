@@ -108,6 +108,7 @@ int rvtrace_poll_bit(struct rvtrace_component *comp, int offset,
 int rvtrace_enable_component(struct rvtrace_component *comp);
 int rvtrace_disable_component(struct rvtrace_component *comp);
 int rvtrace_component_reset(struct rvtrace_component *comp);
+bool rvtrace_loses_context_with_cpu(struct device *dev);
 
 static inline void *rvtrace_component_data(struct rvtrace_component * comp) {
 	return comp->id.data;

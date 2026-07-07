@@ -68,6 +68,13 @@ int rvtrace_component_reset(struct rvtrace_component *comp)
 }
 EXPORT_SYMBOL_GPL(rvtrace_component_reset);
 
+bool rvtrace_loses_context_with_cpu(struct device *dev)
+{
+	return fwnode_property_present(dev_fwnode(dev),
+				       "riscv,rvtrace-loses-context-with-cpu");
+}
+EXPORT_SYMBOL_GPL(rvtrace_loses_context_with_cpu);
+
 static void rvtrace_component_id_smp_call(void *info)
 {
 	u32 impl, type, major, minor;
