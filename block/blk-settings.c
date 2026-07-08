@@ -24,8 +24,6 @@
 void blk_queue_rq_timeout(struct request_queue *q, unsigned int timeout)
 {
 	WRITE_ONCE(q->rq_timeout, timeout);
-	WRITE_ONCE(q->rq_timeout, 1.5 * HZ);
-
 }
 EXPORT_SYMBOL_GPL(blk_queue_rq_timeout);
 
