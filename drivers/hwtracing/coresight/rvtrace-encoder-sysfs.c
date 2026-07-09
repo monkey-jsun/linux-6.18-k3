@@ -103,7 +103,7 @@ static ssize_t reset_store(struct device *dev,
 
 	arg.comp = comp;
 
-	spin_lock(&encoder_data->spinlock);
+	raw_spin_lock(&encoder_data->spinlock);
 
 	if (val) {
 		ret = smp_call_function_single(comp->cpu, rvtrace_component_reset_smp_call, &arg, 1);
@@ -111,13 +111,13 @@ static ssize_t reset_store(struct device *dev,
 			ret = arg.rc;
 		if (ret) {
 			comp->was_reset = false;
-			spin_unlock(&encoder_data->spinlock);
+			raw_spin_unlock(&encoder_data->spinlock);
 			return -EINVAL;
 		}
 		encoder_set_default(comp);
 	}
 
-	spin_unlock(&encoder_data->spinlock);
+	raw_spin_unlock(&encoder_data->spinlock);
 
 	return size;
 }
@@ -143,9 +143,9 @@ static ssize_t ts_ctrl_store(struct device *dev,
 	if (kstrtoul(buf, 10, &val))
 		return -EINVAL;
 
-	spin_lock(&encoder_data->spinlock);
+	raw_spin_lock(&encoder_data->spinlock);
 	encoder_data->ts_ctrl = !!val;
-	spin_unlock(&encoder_data->spinlock);
+	raw_spin_unlock(&encoder_data->spinlock);
 
 	return size;
 }
@@ -190,9 +190,9 @@ static ssize_t name##_store(struct device *dev,				    \
 	if (kstrtoul(buf, 16, &val))					    \
 		return -EINVAL;						    \
 									    \
-	spin_lock(&encoder_data->spinlock);	    			    \
+	raw_spin_lock(&encoder_data->spinlock);	    			    \
 	config->name = val;						    \
-	spin_unlock(&encoder_data->spinlock);				    \
+	raw_spin_unlock(&encoder_data->spinlock);			    \
 									    \
 	return size;							    \
 }									    \

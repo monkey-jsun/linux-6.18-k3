@@ -145,7 +145,7 @@ struct encoder_save_state {
 
 struct encoder_data {
 	struct coresight_device		    *csdev;
-	spinlock_t                          spinlock;
+	raw_spinlock_t                      spinlock;
 	bool                                sticky_enable;
 	bool                                boot_enable;
 	bool                                has_timestamp;

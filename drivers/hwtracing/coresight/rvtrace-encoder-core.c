@@ -263,7 +263,7 @@ static int encoder_enable_sysfs(struct coresight_device *csdev)
 	struct component_arg arg = { };
 	int ret;
 
-	spin_lock(&encoder_data->spinlock);
+	raw_spin_lock(&encoder_data->spinlock);
 
 	/*
 	 * Executing encoder_enable_hw on the cpu whose trace encoder is being
@@ -277,7 +277,7 @@ static int encoder_enable_sysfs(struct coresight_device *csdev)
 	if (!ret)
 		encoder_data->sticky_enable = true;
 
-	spin_unlock(&encoder_data->spinlock);
+	raw_spin_unlock(&encoder_data->spinlock);
 
 	if (!ret)
 		dev_dbg(&csdev->dev, "Trace Encoder tracing enabled\n");
@@ -366,7 +366,7 @@ static void encoder_disable_sysfs(struct coresight_device *csdev)
 	 * DYING hotplug callback is serviced by the trace encoder driver.
 	 */
         cpus_read_lock();
-        spin_lock(&encoder_data->spinlock);
+        raw_spin_lock(&encoder_data->spinlock);
 
 	/*
 	 * Executing encoder_disable_hw on the cpu whose trace encoder is being
@@ -375,7 +375,7 @@ static void encoder_disable_sysfs(struct coresight_device *csdev)
 	arg.comp = comp;
 	smp_call_function_single(comp->cpu, encoder_disable_hw_smp_call, &arg, 1);
 
-	spin_unlock(&encoder_data->spinlock);
+	raw_spin_unlock(&encoder_data->spinlock);
 	cpus_read_unlock();
 
 	dev_dbg(&csdev->dev, "Trace Encoder tracing disabled\n");
@@ -542,10 +542,10 @@ static int encoder_starting_cpu(unsigned int cpu)
 	struct encoder_data *encoder_data = rvtrace_component_data(comp);
 	int ret = 0;
 
-	spin_lock(&encoder_data->spinlock);
+	raw_spin_lock(&encoder_data->spinlock);
 	if (coresight_get_mode(encoder_data->csdev))
 		ret = encoder_enable_hw(comp);
-	spin_unlock(&encoder_data->spinlock);
+	raw_spin_unlock(&encoder_data->spinlock);
 	return ret;
 }
 
@@ -555,10 +555,10 @@ static int encoder_dying_cpu(unsigned int cpu)
 	struct encoder_data *encoder_data = rvtrace_component_data(comp);
 	int ret = 0;
 
-	spin_lock(&encoder_data->spinlock);
+	raw_spin_lock(&encoder_data->spinlock);
 	if (coresight_get_mode(encoder_data->csdev))
 		ret = encoder_disable_hw(comp);
-	spin_unlock(&encoder_data->spinlock);
+	raw_spin_unlock(&encoder_data->spinlock);
 	comp->was_reset = false;
 	return ret;
 }
@@ -671,7 +671,7 @@ static int encoder_probe(struct platform_device *pdev)
 	/* Set component data before registration so is_visible callbacks can access it */
 	comp->id.data = encoder_data;
 
-	spin_lock_init(&encoder_data->spinlock);
+	raw_spin_lock_init(&encoder_data->spinlock);
 
 	pdata = coresight_get_platform_data(dev);
 	if (IS_ERR(pdata))
