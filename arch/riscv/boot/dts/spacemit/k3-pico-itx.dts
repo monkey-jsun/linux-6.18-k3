@@ -43,12 +43,12 @@
 };
 
 &usb2_host {
-	reset-on-resume;
 	/* Ensure no defered probe cause USB disconnect */
 	function-supply = <&hub_vbus>;
 
 	hub@1 {
 		vdd-supply = <&hub_vbus>;
+		always-powered-in-suspend;
 	};
 };
 
