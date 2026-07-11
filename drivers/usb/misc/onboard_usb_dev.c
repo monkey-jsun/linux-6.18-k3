@@ -443,6 +443,9 @@ static int onboard_dev_probe(struct platform_device *pdev)
 	if (!onboard_dev->pdata->is_hub)
 		onboard_dev->always_powered_in_suspend = true;
 
+	if (device_property_read_bool(dev, "always-powered-in-suspend"))
+		onboard_dev->always_powered_in_suspend = true;
+
 	onboard_dev->dev = dev;
 
 	err = onboard_dev_get_regulators(onboard_dev);
