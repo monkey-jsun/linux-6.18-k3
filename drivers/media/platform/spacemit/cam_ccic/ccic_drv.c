@@ -297,16 +297,24 @@ static struct ccic_ctrl_ops ccic_ctrl_ops = {
 	.config_csi_path_vc = ccic_config_csi_path_vc,
 };
 
+struct ccic_async_connection {
+	struct v4l2_async_connection asc;
+	unsigned int endpoint_id;
+	unsigned int lane_num;
+	unsigned int mipi_m_bps;
+};
+
 static int ccic_async_bound(struct v4l2_async_notifier *notifier,
 			    struct v4l2_subdev *subdev,
 			    struct v4l2_async_connection *asc)
 {
 	struct ccic_dev *ccic_dev =
 		container_of(notifier, struct ccic_dev, notifier);
+	struct ccic_async_connection *conn =
+		container_of(asc, struct ccic_async_connection, asc);
 	int ret;
-
-	ccic_dev->sensor_sd = subdev;
-	dev_info(ccic_dev->dev, "bound sensor subdev %s\n", subdev->name);
+	unsigned int lane_num;
+	unsigned int mipi_m_bps;
 
 	ret = v4l2_ctrl_add_handler(&ccic_dev->ctrl_handler,
 				    subdev->ctrl_handler, NULL, true);
@@ -314,6 +322,20 @@ static int ccic_async_bound(struct v4l2_async_notifier *notifier,
 		dev_warn(ccic_dev->dev,
 			 "failed to add sensor controls to video node: %d\n",
 			 ret);
+
+	mutex_lock(&ccic_dev->sensor_lock);
+	if (conn->lane_num)
+		ccic_dev->default_lane_num = conn->lane_num;
+	if (conn->mipi_m_bps)
+		ccic_dev->default_mipi_m_bps = conn->mipi_m_bps;
+	ccic_dev->sensor_sd = subdev;
+	lane_num = ccic_dev->default_lane_num;
+	mipi_m_bps = ccic_dev->default_mipi_m_bps;
+	mutex_unlock(&ccic_dev->sensor_lock);
+
+	dev_info(ccic_dev->dev,
+		 "bound sensor subdev %s endpoint %u lanes %u mipi_mbps %u\n",
+		 subdev->name, conn->endpoint_id, lane_num, mipi_m_bps);
 
 	return 0;
 }
@@ -325,8 +347,12 @@ static void ccic_async_unbind(struct v4l2_async_notifier *notifier,
 	struct ccic_dev *ccic_dev =
 		container_of(notifier, struct ccic_dev, notifier);
 
+	mutex_lock(&ccic_dev->sensor_stream_lock);
+	mutex_lock(&ccic_dev->sensor_lock);
 	if (ccic_dev->sensor_sd == subdev)
 		ccic_dev->sensor_sd = NULL;
+	mutex_unlock(&ccic_dev->sensor_lock);
+	mutex_unlock(&ccic_dev->sensor_stream_lock);
 }
 
 static const struct v4l2_async_notifier_operations ccic_async_ops = {
@@ -339,8 +365,7 @@ static int ccic_async_register(struct ccic_dev *ccic_dev)
 	struct fwnode_handle *ep;
 	struct fwnode_handle *remote_ep;
 	struct fwnode_handle *remote_dev;
-	struct v4l2_async_connection *asc;
-	struct v4l2_fwnode_endpoint vep = { 0 };
+	struct ccic_async_connection *asc;
 	bool has_remote = false;
 	int ret;
 
@@ -348,16 +373,26 @@ static int ccic_async_register(struct ccic_dev *ccic_dev)
 	ccic_dev->notifier.ops = &ccic_async_ops;
 
 	fwnode_graph_for_each_endpoint(dev_fwnode(ccic_dev->dev), ep) {
+		struct v4l2_fwnode_endpoint vep = { 0 };
+		unsigned int endpoint_id = 0;
+		unsigned int lane_num = 0;
+		unsigned int mipi_m_bps = 0;
+
 		memset(&vep, 0, sizeof(vep));
 		ret = v4l2_fwnode_endpoint_parse(ep, &vep);
 		if (ret) {
 			dev_warn(ccic_dev->dev,
 				 "failed to parse endpoint: %d\n", ret);
 		} else {
+			endpoint_id = vep.base.id;
+			lane_num = vep.bus.mipi_csi2.num_data_lanes;
+			if (vep.nr_of_link_frequencies && vep.link_frequencies[0])
+				mipi_m_bps =
+					DIV_ROUND_UP_ULL(vep.link_frequencies[0] * 2,
+							 MHZ);
 			dev_info(ccic_dev->dev,
-				 "found endpoint lanes %u link_freqs %u\n",
-				 vep.bus.mipi_csi2.num_data_lanes,
-				 vep.nr_of_link_frequencies);
+				 "found endpoint id %u lanes %u mipi_mbps %u\n",
+				 endpoint_id, lane_num, mipi_m_bps);
 		}
 		v4l2_fwnode_endpoint_free(&vep);
 
@@ -380,16 +415,14 @@ static int ccic_async_register(struct ccic_dev *ccic_dev)
 		ret = v4l2_fwnode_endpoint_parse(ep, &vep);
 		if (!ret) {
 			if (vep.bus.mipi_csi2.num_data_lanes)
-				ccic_dev->default_lane_num =
-					vep.bus.mipi_csi2.num_data_lanes;
+				lane_num = vep.bus.mipi_csi2.num_data_lanes;
 			if (vep.nr_of_link_frequencies && vep.link_frequencies[0])
-				ccic_dev->default_mipi_m_bps =
+				mipi_m_bps =
 					DIV_ROUND_UP_ULL(vep.link_frequencies[0] * 2,
 							 MHZ);
 			dev_info(ccic_dev->dev,
 				 "active endpoint csi lanes %u mipi_mbps %u\n",
-				 ccic_dev->default_lane_num,
-				 ccic_dev->default_mipi_m_bps);
+				 lane_num, mipi_m_bps);
 		}
 		v4l2_fwnode_endpoint_free(&vep);
 
@@ -397,27 +430,28 @@ static int ccic_async_register(struct ccic_dev *ccic_dev)
 		ret = v4l2_fwnode_endpoint_parse(remote_ep, &vep);
 		if (!ret) {
 			if (vep.bus.mipi_csi2.num_data_lanes)
-				ccic_dev->default_lane_num =
-					vep.bus.mipi_csi2.num_data_lanes;
+				lane_num = vep.bus.mipi_csi2.num_data_lanes;
 			if (vep.nr_of_link_frequencies && vep.link_frequencies[0])
-				ccic_dev->default_mipi_m_bps =
+				mipi_m_bps =
 					DIV_ROUND_UP_ULL(vep.link_frequencies[0] * 2,
 							 MHZ);
 			dev_info(ccic_dev->dev,
 				 "remote default csi lanes %u mipi_mbps %u\n",
-				 ccic_dev->default_lane_num,
-				 ccic_dev->default_mipi_m_bps);
+				 lane_num, mipi_m_bps);
 		}
 		v4l2_fwnode_endpoint_free(&vep);
 
 		asc = v4l2_async_nf_add_fwnode_remote(&ccic_dev->notifier, ep,
-						      struct v4l2_async_connection);
+						      struct ccic_async_connection);
 		fwnode_handle_put(remote_ep);
 		if (IS_ERR(asc)) {
 			ret = PTR_ERR(asc);
 			v4l2_async_nf_cleanup(&ccic_dev->notifier);
 			return ret;
 		}
+		asc->endpoint_id = endpoint_id;
+		asc->lane_num = lane_num;
+		asc->mipi_m_bps = mipi_m_bps;
 
 		has_remote = true;
 	}
@@ -1019,6 +1053,7 @@ static int ccic_probe(struct platform_device *pdev)
 	ccic_dev->dev = &pdev->dev;
 	ccic_dev->ctrl = ccic_ctrl;
 	ccic_dev->interrupt_mask_value = CSI2PHYERRS | FRAMEIRQS;
+	mutex_init(&ccic_dev->sensor_lock);
 	mutex_init(&ccic_dev->sensor_stream_lock);
 	dev_set_drvdata(dev, ccic_dev);
 

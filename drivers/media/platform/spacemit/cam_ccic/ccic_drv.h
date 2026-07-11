@@ -180,6 +180,7 @@ struct ccic_dev {
 	struct csiphy_device *csiphy;
 	struct v4l2_device v4l2_dev;
 	struct v4l2_async_notifier notifier;
+	struct mutex sensor_lock; /* protects sensor_sd and default CSI params */
 	struct v4l2_subdev *sensor_sd;
 	struct mutex sensor_stream_lock;
 	unsigned int sensor_stream_count;
