@@ -27,6 +27,23 @@ void register_syscore_ops(struct syscore_ops *ops)
 EXPORT_SYMBOL_GPL(register_syscore_ops);
 
 /**
+ * register_syscore_ops_first - Register system core operations to run last
+ *                               on suspend and first on resume.
+ * @ops: System core operations to register.
+ *
+ * Inserts at the head of the list. syscore_suspend() iterates in reverse,
+ * so head entries run last on suspend; syscore_resume() iterates forward,
+ * so head entries run first on resume.
+ */
+void register_syscore_ops_first(struct syscore_ops *ops)
+{
+	mutex_lock(&syscore_ops_lock);
+	list_add(&ops->node, &syscore_ops_list);
+	mutex_unlock(&syscore_ops_lock);
+}
+EXPORT_SYMBOL_GPL(register_syscore_ops_first);
+
+/**
  * unregister_syscore_ops - Unregister a set of system core operations.
  * @ops: System core operations to unregister.
  */
