@@ -33,8 +33,20 @@
 #include <linux/dma-direction.h>
 #include <linux/suspend.h>
 #include <linux/platform_device.h>
+#ifdef CONFIG_HIBERNATION
+#include <linux/vmalloc.h>
+#include <linux/memremap.h>
+#include <linux/libnvdimm.h>
+#include <asm/csr.h>
+#include <asm/sbi.h>
+#include <asm/suspend.h>
+#endif
 #include "remoteproc_internal.h"
 #include "remoteproc_elf_helpers.h"
+
+/* ========================================================================
+ * Section 1: Data types and constants
+ * ======================================================================== */
 
 #define MAX_MEM_BASE	2
 #define MAX_MBOX	2
@@ -50,7 +62,6 @@ struct spacemit_mbox {
 	struct mbox_chan *chan;
 	struct mbox_client client;
 	struct task_struct *mb_thread;
-	bool kthread_running;
 	struct completion mb_comp;
 	int vq_id;
 };
@@ -62,6 +73,43 @@ struct spacemit_rproc {
 	void __iomem *rsc_table_va;	 /* ioremap'd I/O window, for write-back */
 	struct resource_table *rsc_table_ptr; /* kmalloc'd copy returned to core */
 };
+
+
+#ifdef CONFIG_HIBERNATION
+#define RCPU_CORE0_BOOT_ENTRY_LO	0xc088007c
+#define RCPU_CORE0_BOOT_ENTRY_HI	0xc0880080
+#define RCPU_BOOT_ENTRY_SIZE		8	/* LO + HI, 2 × u32 */
+
+#define SPACEMIT_HIBERRESTORE_MAGIC	0x52455354U	/* "REST" — set by PM_RESTORE_PREPARE */
+#define SPACEMIT_HIBERSNAP_DONE_MAGIC	0x444f4e45U	/* "DONE" — set after snap restored, before cpu_suspend */
+
+/*
+ * Sub-region offsets and sizes within the merged "hibernation_nomap" DT node
+ * (base = 0x100700000, total = 0x85400).
+ */
+#define HIBER_AP_MISC_OFFSET		0x000400UL	/* hibernation_ap_misc */
+#define HIBER_AP_MISC_SIZE		0x001000UL
+#define HIBER_SNAP_MISC_OFFSET		0x001400UL	/* hibernation_snap_misc */
+#define HIBER_SNAP_MISC_SIZE		0x084000UL
+
+static struct {
+	/* hibernation_snap_rcpu: rcpu0(5M) + rcpu1(5M) + opensbi(2M), backed up as one block */
+	void    *snap_rcop_va;
+	size_t   snap_rcop_size;
+	void    *snap_backup;	/* vmalloc'd backup of snap_rcop_va + snap_srrpi_va; in hibernation image */
+	void    *snap_srrpi_va;	/* hibernation_snap_misc: SRAM + RPMI snapshots */
+	size_t   snap_srrpi_size;
+	void __iomem *rcpu0_boot_entry_va;	/* maps CORE0 LO/HI regs */
+	unsigned long rcpu0_boot_entry;
+	void __iomem *hiber_apuse_va;	/* no-map region, survives hibernation image restore */
+} spacemit_rproc_ctx;
+
+static bool spacemit_rproc_hibernating;
+#endif /* CONFIG_HIBERNATION */
+
+/* ========================================================================
+ * Section 2: Remote processor ops
+ * ======================================================================== */
 
 static int spacemit_rproc_mem_alloc(struct rproc *rproc, struct rproc_mem_entry *mem)
 {
@@ -305,7 +353,6 @@ static int __process_theread(void *arg)
 	struct spacemit_mbox *mb = container_of(cl, struct spacemit_mbox, client);
 	struct sched_param param = {.sched_priority = 0 };
 
-	mb->kthread_running = true;
 	ret = sched_setscheduler(current, SCHED_FIFO, &param);
 	set_freezable();
 
@@ -316,10 +363,9 @@ static int __process_theread(void *arg)
 			dev_dbg(&rproc->dev, "no message found in vq%d\n", mb->vq_id);
 	} while (!kthread_should_stop());
 
-	mb->kthread_running = false;
-
 	return 0;
 }
+
 static void k3_rproc_mb_callback(struct mbox_client *cl, void *data)
 {
 	struct spacemit_mbox *mb = container_of(cl, struct spacemit_mbox, client);
@@ -327,85 +373,421 @@ static void k3_rproc_mb_callback(struct mbox_client *cl, void *data)
 	complete(&mb->mb_comp);
 }
 
+/* ========================================================================
+ * Section 3: Hibernation subsystem
+ * ======================================================================== */
+
+#ifdef CONFIG_HIBERNATION
+extern unsigned long spacemit_suspend_ctx_va;
+asmlinkage int spacemit_cpu_resume_enter(unsigned long hartid, unsigned long context);
+
+static int rproc_system_suspend(unsigned long sleep_type,
+                              unsigned long resume_addr,
+                              unsigned long opaque)
+{
+	struct sbiret ret;
+
+	/* flush the local cache */
+	sbi_flush_local_dcache_all();
+
+	/*
+	 * Save the context VA in a .data global before the SBI ecall so
+	 * spacemit_cpu_resume_enter() can load it directly without relying
+	 * on a1 from OpenSBI (which replays a stale snapshot address).
+	 */
+	spacemit_suspend_ctx_va = opaque;
+	sbi_flush_local_dcache_all();
+
+	ret = sbi_ecall(SBI_EXT_SUSP, SBI_EXT_SUSP_SYSTEM_SUSPEND,
+			sleep_type,
+			__pa_symbol(spacemit_cpu_resume_enter),
+			opaque, 0, 0, 0);
+	if (ret.error)
+		return sbi_err_map_linux_errno(ret.error);
+
+	return ret.value;
+}
+
+static int spacemit_rproc_pm_notifier(struct notifier_block *nb,
+				      unsigned long event, void *data)
+{
+	switch (event) {
+	case PM_HIBERNATION_PREPARE:
+		spacemit_rproc_hibernating = true;
+		break;
+	case PM_RESTORE_PREPARE:
+		/* write to no-map region so the flag survives memory restore.
+		 * If DONE is already present, opensbi already ran on the prior boot
+		 * and restored the small cores — don't overwrite with REST. */
+		if (spacemit_rproc_ctx.hiber_apuse_va &&
+		    readl(spacemit_rproc_ctx.hiber_apuse_va) != SPACEMIT_HIBERSNAP_DONE_MAGIC)
+			writel(SPACEMIT_HIBERRESTORE_MAGIC,
+			       spacemit_rproc_ctx.hiber_apuse_va);
+		break;
+	case PM_POST_HIBERNATION:
+		spacemit_rproc_hibernating = false;
+		break;
+	case PM_POST_RESTORE:
+		if (spacemit_rproc_ctx.hiber_apuse_va)
+			writel(0, spacemit_rproc_ctx.hiber_apuse_va);
+		break;
+	}
+	return NOTIFY_OK;
+}
+
+static struct notifier_block spacemit_rproc_pm_nb = {
+	.notifier_call = spacemit_rproc_pm_notifier,
+};
+
+static int spacemit_rproc_syscore_suspend(void)
+{
+	int ret;
+
+	if (!spacemit_rproc_hibernating)
+		return 0;
+
+	/* suspend to DISK so the rcpu writes its snapshots into the no-map regions */
+	ret = cpu_suspend(SBI_SUSP_SLEEP_TYPE_SUSPEND_TO_DISK, rproc_system_suspend);
+	if (ret) {
+		pr_err("k3-rproc: rcpu snapshot suspend failed (%d), aborting hibernation\n", ret);
+		return ret;
+	}
+
+	/* invalidate CPU dcache over both no-map regions (memremap addresses — use
+	 * arch_invalidate_pmem, not flush_dcache_page which only works on linear-map VAs)
+	 * so the hibernation framework reads rcpu-written data when building the image */
+	arch_invalidate_pmem(spacemit_rproc_ctx.snap_rcop_va, spacemit_rproc_ctx.snap_rcop_size);
+	arch_invalidate_pmem(spacemit_rproc_ctx.snap_srrpi_va, spacemit_rproc_ctx.snap_srrpi_size);
+
+	/* snap_rcop_va covers rcpu0(5M) + rcpu1(5M) + opensbi(2M) contiguously — back up
+	 * the whole block at once.  snap_srrpi_va (SRAM + RPMI) follows immediately. */
+	memcpy(spacemit_rproc_ctx.snap_backup,
+	       spacemit_rproc_ctx.snap_rcop_va,
+	       spacemit_rproc_ctx.snap_rcop_size);
+	memcpy(spacemit_rproc_ctx.snap_backup + spacemit_rproc_ctx.snap_rcop_size,
+	       spacemit_rproc_ctx.snap_srrpi_va,
+	       spacemit_rproc_ctx.snap_srrpi_size);
+
+	arch_wb_cache_pmem(spacemit_rproc_ctx.snap_backup,
+			   spacemit_rproc_ctx.snap_rcop_size +
+			   spacemit_rproc_ctx.snap_srrpi_size);
+
+	return 0;
+}
+
+static void spacemit_rproc_syscore_resume(void)
+{
+	u32 magic;
+	int ret;
+
+	if (!spacemit_rproc_ctx.hiber_apuse_va)
+		return;
+
+	magic = readl(spacemit_rproc_ctx.hiber_apuse_va);
+
+	if (magic == SPACEMIT_HIBERSNAP_DONE_MAGIC) {
+		/* opensbi already restored the small cores on the previous warm
+		 * boot; just clear the flag and let hibernation resume proceed */
+		writel(0, spacemit_rproc_ctx.hiber_apuse_va);
+		return;
+	}
+
+	if (magic != SPACEMIT_HIBERRESTORE_MAGIC)
+		return;
+
+	/* clear immediately so a crash-loop cannot re-trigger */
+	writel(0, spacemit_rproc_ctx.hiber_apuse_va);
+
+	/* zero rcpu0 boot entry so opensbi knows to restore from snapshot */
+	writel(0, spacemit_rproc_ctx.rcpu0_boot_entry_va);
+	writel(0, spacemit_rproc_ctx.rcpu0_boot_entry_va + 4);
+
+	/* restore snap_rcop_va (rcpu0 + rcpu1 + opensbi) and snap_srrpi_va (SRAM + RPMI)
+	 * from snap_backup into the no-map regions before handing off to opensbi */
+	memcpy(spacemit_rproc_ctx.snap_rcop_va,
+	       spacemit_rproc_ctx.snap_backup,
+	       spacemit_rproc_ctx.snap_rcop_size);
+	arch_wb_cache_pmem(spacemit_rproc_ctx.snap_rcop_va, spacemit_rproc_ctx.snap_rcop_size);
+
+	memcpy(spacemit_rproc_ctx.snap_srrpi_va,
+	       spacemit_rproc_ctx.snap_backup + spacemit_rproc_ctx.snap_rcop_size,
+	       spacemit_rproc_ctx.snap_srrpi_size);
+	arch_wb_cache_pmem(spacemit_rproc_ctx.snap_srrpi_va, spacemit_rproc_ctx.snap_srrpi_size);
+
+	ret = cpu_suspend(SBI_SUSP_SLEEP_TYPE_SUSPEND_TO_DISK, rproc_system_suspend);
+	if (ret)
+		pr_err("k3-rproc: rcpu snapshot restore failed (%d), rcpu state undefined\n", ret);
+}
+
+static struct syscore_ops spacemit_rcpu0_syscore_ops = {
+	.suspend = spacemit_rproc_syscore_suspend,
+	.resume  = spacemit_rproc_syscore_resume,
+};
+
+static int spacemit_rproc_snap_rcop_init(struct device *dev)
+{
+	struct device_node *snap_np;
+	struct reserved_mem *rmem;
+
+	/* hibernation_snap[1]: hibernation_snap_rcpu (rcpu0+rcpu1+opensbi snapshots) */
+	snap_np = of_parse_phandle(dev->of_node, "hibernation_snap", 1);
+	if (!snap_np) {
+		dev_err(dev, "hibernation_snap[1] node not found\n");
+		return -ENODEV;
+	}
+
+	rmem = of_reserved_mem_lookup(snap_np);
+	of_node_put(snap_np);
+	if (!rmem) {
+		dev_err(dev, "hibernation_snap[1] reserved_mem lookup failed\n");
+		return -ENODEV;
+	}
+
+	spacemit_rproc_ctx.snap_rcop_va = memremap(rmem->base, rmem->size, MEMREMAP_WB);
+	if (!spacemit_rproc_ctx.snap_rcop_va) {
+		dev_err(dev, "memremap hibernation_snap failed\n");
+		return -ENOMEM;
+	}
+	/* snap_rcop_size covers the full region: rcpu0(5M) + rcpu1(5M) + opensbi(2M) */
+	spacemit_rproc_ctx.snap_rcop_size = rmem->size;
+	return 0;
+}
+
+static int spacemit_rproc_hiber_apuse_init(struct device *dev)
+{
+	struct device_node *np;
+	struct reserved_mem *rmem;
+
+	/* hibernation_snap[0]: hibernation_nomap (misc + AP state + SRAM/RPMI snapshots) */
+	np = of_parse_phandle(dev->of_node, "hibernation_snap", 0);
+	if (!np) {
+		dev_err(dev, "hibernation_snap[0] node not found\n");
+		return -ENODEV;
+	}
+
+	rmem = of_reserved_mem_lookup(np);
+	of_node_put(np);
+	if (!rmem) {
+		dev_err(dev, "hibernation_snap[0] reserved_mem lookup failed\n");
+		return -ENODEV;
+	}
+
+	if (rmem->size < HIBER_AP_MISC_OFFSET + HIBER_AP_MISC_SIZE) {
+		dev_err(dev, "hibernation_snap[0] too small: %pa < 0x%lx\n",
+			&rmem->size, HIBER_AP_MISC_OFFSET + HIBER_AP_MISC_SIZE);
+		return -EINVAL;
+	}
+
+	spacemit_rproc_ctx.hiber_apuse_va =
+		ioremap(rmem->base + HIBER_AP_MISC_OFFSET, HIBER_AP_MISC_SIZE);
+	if (!spacemit_rproc_ctx.hiber_apuse_va) {
+		dev_err(dev, "ioremap hibernation_store_misc failed\n");
+		return -ENOMEM;
+	}
+
+	/* preserve DONE magic across the warm-boot so syscore_resume can detect
+	 * that opensbi already restored the small cores; clear everything else */
+	if (readl(spacemit_rproc_ctx.hiber_apuse_va) != SPACEMIT_HIBERSNAP_DONE_MAGIC)
+		writel(0, spacemit_rproc_ctx.hiber_apuse_va);
+	return 0;
+}
+
+static int spacemit_rproc_snap_srrpi_init(struct device *dev)
+{
+	struct device_node *np;
+	struct reserved_mem *rmem;
+
+	/* hibernation_snap[0]: hibernation_nomap (SRAM + RPMI snapshots at +HIBER_SNAP_MISC_OFFSET) */
+	np = of_parse_phandle(dev->of_node, "hibernation_snap", 0);
+	if (!np) {
+		dev_err(dev, "hibernation_snap[0] node not found\n");
+		return -ENODEV;
+	}
+
+	rmem = of_reserved_mem_lookup(np);
+	of_node_put(np);
+	if (!rmem) {
+		dev_err(dev, "hibernation_snap[0] reserved_mem lookup failed\n");
+		return -ENODEV;
+	}
+
+	if (rmem->size < HIBER_SNAP_MISC_OFFSET + HIBER_SNAP_MISC_SIZE) {
+		dev_err(dev, "hibernation_snap[0] too small: %pa < 0x%lx\n",
+			&rmem->size, HIBER_SNAP_MISC_OFFSET + HIBER_SNAP_MISC_SIZE);
+		return -EINVAL;
+	}
+
+	spacemit_rproc_ctx.snap_srrpi_va =
+		memremap(rmem->base + HIBER_SNAP_MISC_OFFSET, HIBER_SNAP_MISC_SIZE,
+			 MEMREMAP_WB);
+	if (!spacemit_rproc_ctx.snap_srrpi_va) {
+		dev_err(dev, "memremap hibernation_snap_misc failed\n");
+		return -ENOMEM;
+	}
+	spacemit_rproc_ctx.snap_srrpi_size = HIBER_SNAP_MISC_SIZE;
+	return 0;
+}
+
+static void spacemit_rproc_regions_free(void)
+{
+	if (spacemit_rproc_ctx.snap_backup) {
+		vfree(spacemit_rproc_ctx.snap_backup);
+		spacemit_rproc_ctx.snap_backup = NULL;
+	}
+
+	if (spacemit_rproc_ctx.snap_rcop_va) {
+		memunmap(spacemit_rproc_ctx.snap_rcop_va);
+		spacemit_rproc_ctx.snap_rcop_va = NULL;
+		spacemit_rproc_ctx.snap_rcop_size = 0;
+	}
+
+	if (spacemit_rproc_ctx.rcpu0_boot_entry_va) {
+		iounmap(spacemit_rproc_ctx.rcpu0_boot_entry_va);
+		spacemit_rproc_ctx.rcpu0_boot_entry_va = NULL;
+	}
+
+	if (spacemit_rproc_ctx.hiber_apuse_va) {
+		iounmap(spacemit_rproc_ctx.hiber_apuse_va);
+		spacemit_rproc_ctx.hiber_apuse_va = NULL;
+	}
+
+	if (spacemit_rproc_ctx.snap_srrpi_va) {
+		memunmap(spacemit_rproc_ctx.snap_srrpi_va);
+		spacemit_rproc_ctx.snap_srrpi_va = NULL;
+		spacemit_rproc_ctx.snap_srrpi_size = 0;
+	}
+}
+#endif /* CONFIG_HIBERNATION */
+
+/* ========================================================================
+ * Section 4: Platform driver
+ * ======================================================================== */
+
+static int spacemit_mbox_init_one(struct device *dev, struct spacemit_mbox *mb)
+{
+	struct mbox_client *cl = &mb->client;
+
+	cl->dev = dev;
+	cl->rx_callback = k3_rproc_mb_callback;
+	cl->tx_block = true;
+	init_completion(&mb->mb_comp);
+
+	mb->chan = mbox_request_channel_byname(cl, mb->name);
+	if (IS_ERR(mb->chan)) {
+		dev_err(dev, "failed to request mbox channel '%s'\n", mb->name);
+		return PTR_ERR(mb->chan);
+	}
+
+	mb->mb_thread = kthread_run(__process_theread, cl, mb->name);
+	if (IS_ERR(mb->mb_thread)) {
+		int ret = PTR_ERR(mb->mb_thread);
+
+		mbox_free_channel(mb->chan);
+		mb->chan = NULL;
+		return ret;
+	}
+
+	return 0;
+}
+
 static int spacemit_rproc_probe(struct platform_device *pdev)
 {
 	int ret, i;
-	const char *name;
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
 	const char *fw_name;
 	struct spacemit_rproc *priv;
-	struct mbox_client *cl;
 	struct rproc *rproc;
+
+	if (!of_node_name_eq(np, "rcpu_rproc0")) {
+#ifdef CONFIG_HIBERNATION
+		ret = spacemit_rproc_snap_rcop_init(dev);
+		if (ret)
+			return ret;
+		ret = spacemit_rproc_hiber_apuse_init(dev);
+		if (ret) {
+			memunmap(spacemit_rproc_ctx.snap_rcop_va);
+			spacemit_rproc_ctx.snap_rcop_va = NULL;
+			return ret;
+		}
+		ret = spacemit_rproc_snap_srrpi_init(dev);
+		if (ret) {
+			spacemit_rproc_regions_free();
+			return ret;
+		}
+		spacemit_rproc_ctx.rcpu0_boot_entry_va =
+			ioremap(RCPU_CORE0_BOOT_ENTRY_LO, RCPU_BOOT_ENTRY_SIZE);
+		if (!spacemit_rproc_ctx.rcpu0_boot_entry_va) {
+			dev_err(dev, "ioremap rcpu0 boot entry failed\n");
+			spacemit_rproc_regions_free();
+			return -ENOMEM;
+		}
+		/* snap_backup must be allocated before syscore ops are registered so
+		 * syscore_suspend never sees a NULL destination pointer. */
+		spacemit_rproc_ctx.snap_backup =
+			vmalloc(spacemit_rproc_ctx.snap_rcop_size +
+				spacemit_rproc_ctx.snap_srrpi_size);
+		if (!spacemit_rproc_ctx.snap_backup) {
+			dev_err(dev, "failed to alloc snap_backup (%zu bytes)\n",
+				spacemit_rproc_ctx.snap_rcop_size +
+				spacemit_rproc_ctx.snap_srrpi_size);
+			spacemit_rproc_regions_free();
+			return -ENOMEM;
+		}
+		register_pm_notifier(&spacemit_rproc_pm_nb);
+		register_syscore_ops_first(&spacemit_rcpu0_syscore_ops);
+#endif /* CONFIG_HIBERNATION */
+	}
 
 	ret = rproc_of_parse_firmware(dev, 0, &fw_name);
 	if (ret < 0 && ret != -EINVAL)
-		return ret;
+		goto err_hiber;
 
 	rproc = devm_rproc_alloc(dev, np->name, &spacemit_rproc_ops,
 				 fw_name, sizeof(*priv));
-	if (!rproc)
-		return -ENOMEM;
+	if (!rproc) {
+		ret = -ENOMEM;
+		goto err_hiber;
+	}
 
 	priv = rproc->priv;
 	priv->dev = dev;
-
 	platform_set_drvdata(pdev, rproc);
 
-	/* tx */
 	priv->mb[0].name = "vq0";
 	priv->mb[0].vq_id = K3_MBOX_VQ0_ID;
-	priv->mb[0].client.rx_callback = k3_rproc_mb_callback,
-	priv->mb[0].client.tx_block = true,
-
-	/* rx */
 	priv->mb[1].name = "vq1";
 	priv->mb[1].vq_id = K3_MBOX_VQ1_ID;
-	priv->mb[1].client.rx_callback = k3_rproc_mb_callback,
-	priv->mb[1].client.tx_block = true;
 
 	for (i = 0; i < MAX_MBOX; ++i) {
-		name = priv->mb[i].name;
-
-		cl = &priv->mb[i].client;
-		cl->dev = dev;
-		init_completion(&priv->mb[i].mb_comp);
-
-		priv->mb[i].chan = mbox_request_channel_byname(cl, name);
-		if (IS_ERR(priv->mb[i].chan)) {
-			dev_err(dev, "failed to request mbox channel\n");
-			ret = -EINVAL;
-			goto err_0;
-		}
-
-		if (priv->mb[i].vq_id >= 0) {
-			priv->mb[i].mb_thread = kthread_run(__process_theread, (void *)cl, name);
-			if (IS_ERR(priv->mb[i].mb_thread)) {
-				ret = PTR_ERR(priv->mb[i].mb_thread);
-				goto err_0;
-			}
-		}
+		ret = spacemit_mbox_init_one(dev, &priv->mb[i]);
+		if (ret)
+			goto err_mbox;
 	}
 
 	rproc->auto_boot = true;
-	rproc->state = RPROC_DETACHED; 
+	rproc->state = RPROC_DETACHED;
 	ret = devm_rproc_add(dev, rproc);
 	if (ret) {
 		dev_err(dev, "rproc_add failed\n");
-		ret = -EINVAL;
-		goto err_0;
+		goto err_mbox;
 	}
 
 	return 0;
 
-err_0:
+err_mbox:
 	while (--i >= 0) {
-		if (priv->mb[i].chan)
-			mbox_free_channel(priv->mb[i].chan);
-		if (priv->mb[i].mb_thread)
-			kthread_stop(priv->mb[i].mb_thread);
+		kthread_stop(priv->mb[i].mb_thread);
+		mbox_free_channel(priv->mb[i].chan);
 	}
-
+err_hiber:
+#ifdef CONFIG_HIBERNATION
+	if (!of_node_name_eq(np, "rcpu_rproc0")) {
+		unregister_syscore_ops(&spacemit_rcpu0_syscore_ops);
+		unregister_pm_notifier(&spacemit_rproc_pm_nb);
+		spacemit_rproc_regions_free();
+	}
+#endif
 	return ret;
 }
 
@@ -425,10 +807,16 @@ static void spacemit_rproc_remove(struct platform_device *pdev)
 {
 	int i = 0;
 	struct rproc *rproc = platform_get_drvdata(pdev);
-	struct spacemit_rproc *ddata = rproc->priv;
+	struct device_node *np = pdev->dev.of_node;
+	struct spacemit_rproc *ddata;
+
+	if (!rproc)
+		return;
+
+	ddata = rproc->priv;
 
 	for (i = 0; i < MAX_MBOX; ++i)
-		if (ddata->mb[i].kthread_running)
+		if (ddata->mb[i].mb_thread)
 			kthread_stop(ddata->mb[i].mb_thread);
 
 	rproc_del(rproc);
@@ -440,14 +828,15 @@ static void spacemit_rproc_remove(struct platform_device *pdev)
 	}
 	kfree(ddata->rsc_table_ptr);
 	ddata->rsc_table_ptr = NULL;
+
+#ifdef CONFIG_HIBERNATION
+	if (!of_node_name_eq(np, "rcpu_rproc0")) {
+		unregister_syscore_ops(&spacemit_rcpu0_syscore_ops);
+		unregister_pm_notifier(&spacemit_rproc_pm_nb);
+		spacemit_rproc_regions_free();
+	}
+#endif
 }
-
-static const struct of_device_id spacemit_rproc_of_match[] = {
-	{ .compatible = "spacemit,k3-rproc" },
-	{},
-};
-
-MODULE_DEVICE_TABLE(of, spacemit_rproc_of_match);
 
 static void spacemit_rproc_shutdown(struct platform_device *pdev)
 {
@@ -456,17 +845,27 @@ static void spacemit_rproc_shutdown(struct platform_device *pdev)
 	struct spacemit_rproc *priv;
 
 	rproc = dev_get_drvdata(&pdev->dev);
+	if (!rproc)
+		return;
+
 	priv = rproc->priv;
 
 	for (i = 0; i < MAX_MBOX; ++i) {
 		/* release the resource of rt thread */
-		if (priv->mb[i].kthread_running) {
+		if (priv->mb[i].mb_thread) {
 			if (!frozen((priv->mb[i].mb_thread)))
 				kthread_stop(priv->mb[i].mb_thread);
 		}
 		/* mbox_free_channel(priv->mb[i].chan); */
 	}
 }
+
+static const struct of_device_id spacemit_rproc_of_match[] = {
+	{ .compatible = "spacemit,k3-rproc" },
+	{},
+};
+
+MODULE_DEVICE_TABLE(of, spacemit_rproc_of_match);
 
 static struct platform_driver spacemit_rproc_driver = {
 	.probe = spacemit_rproc_probe,
