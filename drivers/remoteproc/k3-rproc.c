@@ -198,6 +198,18 @@ static void spacemit_rproc_kick(struct rproc *rproc, int vqid)
 
 	if (WARN_ON(vqid >= MAX_MBOX))
 		return;
+	/*
+	 * Sync the heap copy of the resource table back to the I/O region
+	 * before kicking the remote processor. This ensures that any updates
+	 * made by the virtio layer (e.g., status, features, vring config)
+	 * are visible to the remote processor, which reads the I/O region.
+	 * Without this, status updates like VIRTIO_CONFIG_STATUS_DRIVER_OK
+	 * remain trapped in the heap copy and the remote processor's
+	 * rproc_virtio_wait_remote_ready() loop never exits.
+	 */
+	if (ddata->rsc_table_va && ddata->rsc_table_ptr && rproc->table_sz)
+		memcpy_toio(ddata->rsc_table_va, ddata->rsc_table_ptr,
+			    rproc->table_sz);
 
 	for (i = 0; i < MAX_MBOX; i++) {
 		if (vqid != ddata->mb[i].vq_id)
