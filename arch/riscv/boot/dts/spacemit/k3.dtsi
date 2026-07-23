@@ -1824,6 +1824,30 @@
 			};
 		};
 
+		gmac_uio0: uio@cac80000 {
+			compatible = "k3,stmmac-uio";
+			spacemit,ethernet = <&eth0>;
+			status = "disabled";
+		};
+
+		gmac_uio1: uio@cac82000 {
+			compatible = "k3,stmmac-uio";
+			spacemit,ethernet = <&eth1>;
+			status = "disabled";
+		};
+
+		gmac_uio2: uio@cac8e000 {
+			compatible = "k3,stmmac-uio";
+			spacemit,ethernet = <&eth2>;
+			status = "disabled";
+		};
+
+		gmac_uio3: uio@a0000000 {
+			compatible = "k3,stmmac-uio";
+			spacemit,ethernet = <&eth3>;
+			status = "disabled";
+		};
+
 		eth0: ethernet@cac80000 {
 			compatible = "spacemit,k3-gmac", "snps,dwmac-5.10a";
 			reg = <0x0 0xcac80000 0x0 0x2000>;
