@@ -16,7 +16,9 @@
 #include <linux/of_irq.h>
 #include <linux/platform_device.h>
 #include <linux/printk.h>
+#include <linux/slab.h>
 #include <linux/smp.h>
+#include <linux/syscore_ops.h>
 
 #include "irq-riscv-aplic-main.h"
 
@@ -172,6 +174,146 @@ static const struct msi_domain_template aplic_msi_template = {
 	},
 };
 
+#ifdef CONFIG_PM_SLEEP
+/*
+ * The APLIC configuration lives in MMIO registers that survive across a
+ * hibernation image load, so the restore kernel's programming (done while
+ * probing devices to read the image) leaks into the resumed kernel and routes
+ * MSIs to the wrong IMSIC vectors. Save the APLIC state before hibernation and
+ * restore it on resume so the resumed kernel's own configuration is put back.
+ */
+struct aplic_msi_saved {
+	struct list_head node;
+	struct aplic_priv *priv;
+	u32 domaincfg;
+	u32 msicfgaddr;
+	u32 msicfgaddrh;
+	u32 *sourcecfg;
+	u32 *target;
+	u32 *ie;
+};
+
+static LIST_HEAD(aplic_msi_saved_list);
+
+static unsigned int aplic_msi_ie_words(struct aplic_priv *priv)
+{
+	return DIV_ROUND_UP(priv->nr_irqs + 1, 32);
+}
+
+static int aplic_msi_syscore_suspend(void)
+{
+	struct aplic_msi_saved *s;
+	unsigned int i;
+
+	list_for_each_entry(s, &aplic_msi_saved_list, node) {
+		struct aplic_priv *priv = s->priv;
+
+		s->domaincfg = readl(priv->regs + APLIC_DOMAINCFG);
+		/* The MSI address registers are only owned in M-mode. */
+		if (IS_ENABLED(CONFIG_RISCV_M_MODE)) {
+			s->msicfgaddr = readl(priv->regs + APLIC_xMSICFGADDR);
+			s->msicfgaddrh = readl(priv->regs + APLIC_xMSICFGADDRH);
+		}
+		for (i = 1; i <= priv->nr_irqs; i++) {
+			s->sourcecfg[i - 1] = readl(priv->regs +
+				APLIC_SOURCECFG_BASE + (i - 1) * sizeof(u32));
+			s->target[i - 1] = readl(priv->regs +
+				APLIC_TARGET_BASE + (i - 1) * sizeof(u32));
+		}
+		for (i = 0; i < aplic_msi_ie_words(priv); i++)
+			s->ie[i] = readl(priv->regs +
+				APLIC_SETIE_BASE + i * sizeof(u32));
+	}
+
+	return 0;
+}
+
+static void aplic_msi_syscore_resume(void)
+{
+	struct aplic_msi_saved *s;
+	unsigned int i;
+
+	list_for_each_entry(s, &aplic_msi_saved_list, node) {
+		struct aplic_priv *priv = s->priv;
+
+		/* Restore the MSI target base address (M-mode only). */
+		if (IS_ENABLED(CONFIG_RISCV_M_MODE)) {
+			writel(s->msicfgaddr, priv->regs + APLIC_xMSICFGADDR);
+			writel(s->msicfgaddrh, priv->regs + APLIC_xMSICFGADDRH);
+		}
+
+		/* Restore per-source config and MSI target (hart/EIID). */
+		for (i = 1; i <= priv->nr_irqs; i++) {
+			writel(s->sourcecfg[i - 1], priv->regs +
+				APLIC_SOURCECFG_BASE + (i - 1) * sizeof(u32));
+			writel(s->target[i - 1], priv->regs +
+				APLIC_TARGET_BASE + (i - 1) * sizeof(u32));
+		}
+
+		/* Restore enable state: clear all, then set the saved bits. */
+		for (i = 0; i < aplic_msi_ie_words(priv); i++) {
+			writel(-1U, priv->regs +
+				APLIC_CLRIE_BASE + i * sizeof(u32));
+			writel(s->ie[i], priv->regs +
+				APLIC_SETIE_BASE + i * sizeof(u32));
+		}
+
+		/* Finally restore the domain config (re-enables delivery). */
+		writel(s->domaincfg, priv->regs + APLIC_DOMAINCFG);
+	}
+}
+
+static struct syscore_ops aplic_msi_syscore_ops = {
+	.suspend	= aplic_msi_syscore_suspend,
+	.resume		= aplic_msi_syscore_resume,
+};
+
+static void aplic_msi_saved_del(void *data)
+{
+	struct aplic_msi_saved *s = data;
+
+	list_del(&s->node);
+}
+
+static int aplic_msi_syscore_register(struct aplic_priv *priv)
+{
+	static bool registered;
+	struct aplic_msi_saved *s;
+	int rc;
+
+	s = devm_kzalloc(priv->dev, sizeof(*s), GFP_KERNEL);
+	if (!s)
+		return -ENOMEM;
+
+	s->priv = priv;
+	s->sourcecfg = devm_kcalloc(priv->dev, priv->nr_irqs, sizeof(u32),
+				    GFP_KERNEL);
+	s->target = devm_kcalloc(priv->dev, priv->nr_irqs, sizeof(u32),
+				 GFP_KERNEL);
+	s->ie = devm_kcalloc(priv->dev, aplic_msi_ie_words(priv), sizeof(u32),
+			     GFP_KERNEL);
+	if (!s->sourcecfg || !s->target || !s->ie)
+		return -ENOMEM;
+
+	list_add_tail(&s->node, &aplic_msi_saved_list);
+	rc = devm_add_action_or_reset(priv->dev, aplic_msi_saved_del, s);
+	if (rc)
+		return rc;
+
+	if (!registered) {
+		register_syscore_ops(&aplic_msi_syscore_ops);
+		registered = true;
+	}
+
+	return 0;
+}
+#else
+static inline int aplic_msi_syscore_register(struct aplic_priv *priv)
+{
+	return 0;
+}
+#endif
+
 int aplic_msi_setup(struct device *dev, void __iomem *regs)
 {
 	const struct imsic_global_config *imsic_global;
@@ -280,6 +422,11 @@ int aplic_msi_setup(struct device *dev, void __iomem *regs)
 	/* Advertise the interrupt controller */
 	pa = priv->msicfg.base_ppn << APLIC_xMSICFGADDR_PPN_SHIFT;
 	dev_info(dev, "%d interrupts forwarded to MSI base %pa\n", priv->nr_irqs, &pa);
+
+	/* Preserve APLIC state across suspend/hibernation */
+	rc = aplic_msi_syscore_register(priv);
+	if (rc)
+		return rc;
 
 	return 0;
 }
