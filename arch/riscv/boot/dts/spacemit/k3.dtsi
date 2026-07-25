@@ -2690,9 +2690,14 @@
 					bits = <5 9>;
 				};
 
+				/* Chip ID: bank7 bit191~251 (61 bits)
+				 * offset 0x17 (23) from bank7 start, spans 9 bytes
+				 * (byte 23 ~ byte 31), matches U-Boot's fuses[9]
+				 * bit 7 of byte 23 is global bit 191
+				 */
 				soc_chip_id: bank7@17,7 {
-					reg = <0x17 8>;
-					bits = <7 55>;
+					reg = <0x17 9>;
+					bits = <7 61>;
 				};
 			};
 		};
