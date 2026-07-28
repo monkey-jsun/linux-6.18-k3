@@ -968,10 +968,13 @@ static const struct amba_id tmc_ids[] = {
 
 MODULE_DEVICE_TABLE(amba, tmc_ids);
 
+static const struct dev_pm_ops tmc_dev_pm_ops;
+
 static struct amba_driver tmc_driver = {
 	.drv = {
 		.name   = "coresight-tmc",
 		.suppress_bind_attrs = true,
+		.pm	= pm_ptr(&tmc_dev_pm_ops),
 	},
 	.probe		= tmc_probe,
 	.shutdown	= tmc_shutdown,
@@ -1036,6 +1039,7 @@ static int tmc_runtime_resume(struct device *dev)
 #endif
 
 static const struct dev_pm_ops tmc_dev_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
 	SET_RUNTIME_PM_OPS(tmc_runtime_suspend, tmc_runtime_resume, NULL)
 };
 
@@ -1055,7 +1059,7 @@ static struct platform_driver tmc_platform_driver = {
 		.name			= "coresight-tmc-platform",
 		.acpi_match_table	= ACPI_PTR(tmc_acpi_ids),
 		.suppress_bind_attrs	= true,
-		.pm			= &tmc_dev_pm_ops,
+		.pm			= pm_ptr(&tmc_dev_pm_ops),
 	},
 };
 
