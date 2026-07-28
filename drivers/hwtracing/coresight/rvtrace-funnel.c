@@ -167,17 +167,6 @@ static ssize_t reset_store(struct device *dev,
 }
 static DEVICE_ATTR_WO(reset);
 
-static ssize_t cpu_show(struct device *dev,
-			struct device_attribute *attr, char *buf)
-{
-	unsigned long val;
-	struct rvtrace_component *comp = dev_get_drvdata(dev->parent);
-
-	val = comp->cpu;
-	return scnprintf(buf, PAGE_SIZE, "%#lx\n", val);
-}
-static DEVICE_ATTR_RO(cpu);
-
 static ssize_t ts_ctrl_show(struct device *dev,
 			   struct device_attribute *attr, char *buf)
 {
@@ -211,7 +200,6 @@ static struct attribute *trace_funnel_attrs[] = {
 	coresight_simple_reg32(impl, RVTRACE_COMPONENT_IMPL_OFFSET),
 	coresight_simple_reg32(disinput, RVTRACE_FUNNEL_DISINPUT_OFFSET),
 	&dev_attr_reset.attr,
-	&dev_attr_cpu.attr,
 	&dev_attr_ts_ctrl.attr,
 	NULL,
 };
@@ -263,6 +251,9 @@ static int funnel_probe(struct platform_device *pdev)
 	if (!funnel_data)
 		return -ENOMEM;
 
+	/* Set component data before registration so is_visible callbacks can access it */
+	comp->id.data = funnel_data;
+
 	spin_lock_init(&funnel_data->spinlock);
 
 	pdata = coresight_get_platform_data(dev);
@@ -275,7 +266,7 @@ static int funnel_probe(struct platform_device *pdev)
 	/* Check if funnel has timestamp component from device tree */
 	funnel_data->has_timestamp = fwnode_property_present(dev->fwnode, "riscv,timestamp-present");
 	if (funnel_data->has_timestamp) {
-		if (rvtrace_init_timestamp(comp, &funnel_data->ts_config)) {
+		if (rvtrace_init_timestamp(comp)) {
 			dev_err(dev, "Timestamp initialization failed\n");
 			return -EINVAL;
 		}
@@ -287,9 +278,6 @@ static int funnel_probe(struct platform_device *pdev)
 		 */
 		funnel_data->ts_ctrl = true;
 	}
-
-	/* Set component data before registration so is_visible callbacks can access it */
-	comp->id.data = funnel_data;
 
 	desc.name = coresight_alloc_device_name(&funnel_devs, dev);
 	desc.access = CSDEV_ACCESS_IOMEM(comp->base);

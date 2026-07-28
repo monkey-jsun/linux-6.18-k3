@@ -18,6 +18,7 @@ struct syscore_ops {
 };
 
 extern void register_syscore_ops(struct syscore_ops *ops);
+extern void register_syscore_ops_first(struct syscore_ops *ops);
 extern void unregister_syscore_ops(struct syscore_ops *ops);
 #ifdef CONFIG_PM_SLEEP
 extern int syscore_suspend(void);

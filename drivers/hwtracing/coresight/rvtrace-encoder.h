@@ -123,6 +123,15 @@ struct encoder_config {
 };
 
 /**
+ * struct encoder_save_state - state to be preserved when encoder is without power
+ */
+struct encoder_save_state {
+	u32	control;
+	u32	features;
+	u32	ts_control;
+};
+
+/**
  * struct encoder_drvdata - specifics associated to an Trace Encoder component
  * @csdev:	    Component vitals needed by the framework.
  * @spinlock:	    Only one at a time pls.
@@ -136,13 +145,14 @@ struct encoder_config {
 
 struct encoder_data {
 	struct coresight_device		    *csdev;
-	spinlock_t                          spinlock;
+	raw_spinlock_t                      spinlock;
 	bool                                sticky_enable;
 	bool                                boot_enable;
 	bool                                has_timestamp;
 	bool                                ts_ctrl;
 	struct encoder_config		    config;
 	struct timestamp_config		    ts_config;
+	struct encoder_save_state	    *save_state;
 };
 
 extern const struct attribute_group *trace_encoder_groups[];

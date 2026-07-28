@@ -1,6 +1,9 @@
 #!/bin/bash -e
 
-PACKAGE_SRC_NAME="linux-riscv-spacemit-generic"
+# PACKAGE_SRC_NAME: unsigned (no KEY_DIR) or signed (KEY_DIR set).
+# Set inside BUILD_DEB_CMD based on KEY_DIR existence.
+PACKAGE_SRC_NAME_UNSIGNED="linux-riscv-spacemit-generic"
+PACKAGE_SRC_NAME_SIGNED="linux-riscv-spacemit-signed-generic"
 CONFIG_FILE="k3_bianbu_defconfig"
 CLEAN_CMD="make distclean && make -C tools/perf clean &&
     VERSION=\$(grep -oP '^VERSION\\s*=\\s*\\K\\d+' Makefile)
@@ -13,7 +16,7 @@ CLEAN_CMD="make distclean && make -C tools/perf clean &&
     rm -f ../linux-tools-\$KERNELRELEASE_*_riscv64.deb &&
     rm -f ../linux-libc-dev_*_riscv64.deb &&
     rm -f ../linux-tools-common_*_all.deb &&
-    rm -f ../${PACKAGE_SRC_NAME}_*_riscv64.*
+    rm -f ../${PACKAGE_SRC_NAME_UNSIGNED}_*_riscv64.* && rm -f ../${PACKAGE_SRC_NAME_SIGNED}_*_riscv64.*
 "
 BUILD_CMD="make $CONFIG_FILE && make -j\${JOBS:-\$(nproc)}"
 BUILD_DEB_CMD="sed -i '/CONFIG_INITRAMFS_SOURCE=/d' arch/riscv/configs/$CONFIG_FILE &&
@@ -23,10 +26,20 @@ BUILD_DEB_CMD="sed -i '/CONFIG_INITRAMFS_SOURCE=/d' arch/riscv/configs/$CONFIG_F
     SUBLEVEL=\$(grep -oP '^SUBLEVEL\\s*=\\s*\\K\\d+' Makefile)
     export KERNELRELEASE=\$VERSION.\$PATCHLEVEL.\$SUBLEVEL
     export LOCALVERSION=\"-generic\"
-    KDEB_SOURCENAME=$PACKAGE_SRC_NAME \\
-    KDEB_PKGVERSION=\$KERNELRELEASE-\$(TZ=Asia/Shanghai date +\"%Y%m%d%H%M%S\") \\
-    KDEB_CHANGELOG_DIST=resolute-porting \\
-    make -j\${JOBS:-\$(nproc)} bindeb-pkg
+    export KDEB_PKGVERSION=\$KERNELRELEASE-\$(TZ=Asia/Shanghai date +\"%Y%m%d%H%M%S\") &&
+    if [ -n \"\$KEY_DIR\" ]; then
+        export KDEB_SOURCENAME=$PACKAGE_SRC_NAME_SIGNED;
+        echo \"[sign] KEY_DIR=\$KEY_DIR -> building SIGNED canonical linux-image deb\";
+    else
+        export KDEB_SOURCENAME=$PACKAGE_SRC_NAME_UNSIGNED;
+        echo \"[sign] KEY_DIR unset -> building UNSIGNED canonical linux-image deb\";
+    fi &&
+        KDEB_CHANGELOG_DIST=resolute-porting \\
+    make -j\${JOBS:-\$(nproc)} bindeb-pkg &&
+        if [ -n \"\$KEY_DIR\" ]; then
+            echo \"[sign] KEY_DIR=\$KEY_DIR -> post-processing canonical linux-image deb\";
+        scripts/make_signed_kernel_deb.sh;
+    fi
 "
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -217,6 +230,40 @@ if [[ -n "$JOBS" ]]; then
     CONTAINER_ENV+=("-e" "JOBS=$JOBS")
 fi
 
+# Forward optional FIT signing controls into the container. KERNEL_ITS needs
+# path remapping because the host and container source roots differ.
+for var in KEY_HINT MKIMAGE DTB_LIST KERNEL_IMAGE DTB_DIR; do
+    if [[ -n "${!var:-}" ]]; then
+        CONTAINER_ENV+=("-e" "$var=${!var}")
+    fi
+done
+if [[ -n "${KERNEL_ITS:-}" && ( -z "$DIRECT_BUILD" || "$DIRECT_BUILD" == "0" ) ]]; then
+    KERNEL_ITS_ABS="$(readlink -f "$KERNEL_ITS" 2>/dev/null || echo "$KERNEL_ITS")"
+    if [[ ! -f "$KERNEL_ITS_ABS" ]]; then
+        echo "Error: KERNEL_ITS not found: $KERNEL_ITS" >&2
+        exit 1
+    fi
+    case "$KERNEL_ITS_ABS" in
+        "$SOURCE_PARENT_DIR"/*)
+            CONTAINER_KERNEL_ITS="/workspace/${KERNEL_ITS_ABS#$SOURCE_PARENT_DIR/}" ;;
+        *)
+            CONTAINER_KERNEL_ITS="$KERNEL_ITS_ABS"
+            VOLUME_MOUNTS+=("-v" "$KERNEL_ITS_ABS:$KERNEL_ITS_ABS:ro") ;;
+    esac
+    CONTAINER_ENV+=("-e" "KERNEL_ITS=$CONTAINER_KERNEL_ITS")
+fi
+if [[ -n "$KEY_DIR" && ( -z "$DIRECT_BUILD" || "$DIRECT_BUILD" == "0" ) ]]; then
+    KEY_DIR_ABS="$(cd "$KEY_DIR" 2>/dev/null && pwd || echo "$KEY_DIR")"
+    case "$KEY_DIR_ABS" in
+        "$SOURCE_PARENT_DIR"/*)
+            CONTAINER_KEY_DIR="/workspace/${KEY_DIR_ABS#$SOURCE_PARENT_DIR/}" ;;
+        *)
+            CONTAINER_KEY_DIR="$KEY_DIR_ABS"
+            VOLUME_MOUNTS+=("-v" "$KEY_DIR_ABS:$KEY_DIR_ABS:ro") ;;
+    esac
+    CONTAINER_ENV+=("-e" "KEY_DIR=$CONTAINER_KEY_DIR")
+fi
+
 # Function to create user permission files for container
 create_user_files() {
     local current_user current_group
@@ -286,6 +333,14 @@ run_command() {
         if [[ -n "$JOBS" ]]; then
             export JOBS
         fi
+        if [[ -n "$KEY_DIR" ]]; then
+            export KEY_DIR
+        fi
+        for var in KEY_HINT MKIMAGE DTB_LIST KERNEL_IMAGE DTB_DIR KERNEL_ITS; do
+            if [[ -n "${!var:-}" ]]; then
+                export "$var"
+            fi
+        done
         bash -c "$cmd"
     else
         [ "$DEBUG" = true ] && echo "Building in container..."

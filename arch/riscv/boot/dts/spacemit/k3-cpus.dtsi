@@ -9,7 +9,7 @@
 				reg = <0>;
 				model = "Spacemit(R) X100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,x100", "riscv";
 				riscv,isa = "rv64imafdcvh";
 				riscv,isa-base = "rv64i";
 				riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "h",
@@ -63,7 +63,7 @@
 				reg = <1>;
 				model = "Spacemit(R) X100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,x100", "riscv";
 				riscv,isa = "rv64imafdcvh";
 				riscv,isa-base = "rv64i";
 				riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "h",
@@ -117,7 +117,7 @@
 				reg = <2>;
 				model = "Spacemit(R) X100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,x100", "riscv";
 				riscv,isa = "rv64imafdcvh";
 				riscv,isa-base = "rv64i";
 				riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "h",
@@ -171,7 +171,7 @@
 				reg = <3>;
 				model = "Spacemit(R) X100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,x100", "riscv";
 				riscv,isa = "rv64imafdcvh";
 				riscv,isa-base = "rv64i";
 				riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "h",
@@ -225,7 +225,7 @@
 				reg = <4>;
 				model = "Spacemit(R) X100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,x100", "riscv";
 				riscv,isa = "rv64imafdcvh";
 				riscv,isa-base = "rv64i";
 				riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "h",
@@ -279,7 +279,7 @@
 				reg = <5>;
 				model = "Spacemit(R) X100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,x100", "riscv";
 				riscv,isa = "rv64imafdcvh";
 				riscv,isa-base = "rv64i";
 				riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "h",
@@ -333,7 +333,7 @@
 				reg = <6>;
 				model = "Spacemit(R) X100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,x100", "riscv";
 				riscv,isa = "rv64imafdcvh";
 				riscv,isa-base = "rv64i";
 				riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "h",
@@ -387,7 +387,7 @@
 				reg = <7>;
 				model = "Spacemit(R) X100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,x100", "riscv";
 				riscv,isa = "rv64imafdcvh";
 				riscv,isa-base = "rv64i";
 				riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "h",
@@ -441,7 +441,7 @@
 				reg = <8>;
 				model = "Spacemit(R) A100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,a100", "riscv";
 				cpu-ai = "true";
 				riscv,isa = "rv64imafdcv";
 				riscv,isa-base = "rv64i";
@@ -495,7 +495,7 @@
 				reg = <9>;
 				model = "Spacemit(R) A100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,a100", "riscv";
 				cpu-ai = "true";
 				riscv,isa = "rv64imafdcv";
 				riscv,isa-base = "rv64i";
@@ -549,7 +549,7 @@
 				reg = <10>;
 				model = "Spacemit(R) A100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,a100", "riscv";
 				cpu-ai = "true";
 				riscv,isa = "rv64imafdcv";
 				riscv,isa-base = "rv64i";
@@ -603,7 +603,7 @@
 				reg = <11>;
 				model = "Spacemit(R) A100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,a100", "riscv";
 				cpu-ai = "true";
 				riscv,isa = "rv64imafdcv";
 				riscv,isa-base = "rv64i";
@@ -657,7 +657,7 @@
 				reg = <12>;
 				model = "Spacemit(R) A100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,a100", "riscv";
 				cpu-ai = "true";
 				riscv,isa = "rv64imafdcv";
 				riscv,isa-base = "rv64i";
@@ -711,7 +711,7 @@
 				reg = <13>;
 				model = "Spacemit(R) A100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,a100", "riscv";
 				cpu-ai = "true";
 				riscv,isa = "rv64imafdcv";
 				riscv,isa-base = "rv64i";
@@ -765,7 +765,7 @@
 				reg = <14>;
 				model = "Spacemit(R) A100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,a100", "riscv";
 				cpu-ai = "true";
 				riscv,isa = "rv64imafdcv";
 				riscv,isa-base = "rv64i";
@@ -819,7 +819,7 @@
 				reg = <15>;
 				model = "Spacemit(R) A100";
 				status = "okay";
-				compatible = "riscv";
+				compatible = "spacemit,a100", "riscv";
 				cpu-ai = "true";
 				riscv,isa = "rv64imafdcv";
 				riscv,isa-base = "rv64i";

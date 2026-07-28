@@ -379,4 +379,21 @@ config STMMAC_PCI
 	  If you have a controller with this interface, say Y or M here.
 
 	  If unsure, say N.
+
+config STMMAC_UIO
+	tristate "STMMAC_UIO ethernet controller"
+	default n
+	select UIO
+	help
+	  Say M here if you want to use the stmmac_uio.ko for DPDK.
+
+	  This driver exports the Ethernet controller's registers and DMA
+	  descriptor rings to userspace via the UIO framework. It does not
+	  use the kernel network stack and is intended for use with DPDK
+	  PMD drivers.
+
+	  If you want to use the Spacemit GMAC hardware with DPDK, enable this
+	  driver. If unsure, say N.
+
+	  The module will be called stmmac_uio.ko.
 endif

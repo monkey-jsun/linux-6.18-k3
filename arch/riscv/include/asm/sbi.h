@@ -130,6 +130,7 @@ enum sbi_ext_susp_fid {
 
 enum sbi_ext_susp_sleep_type {
 	SBI_SUSP_SLEEP_TYPE_SUSPEND_TO_RAM = 0,
+	SBI_SUSP_SLEEP_TYPE_SUSPEND_TO_DISK = 1,
 };
 
 enum sbi_ext_pmu_fid {

@@ -24,7 +24,7 @@ static struct spacemit_soc_info {
 	u32 ver_id;	/* die/wafer version */
 	u32 pack_id;	/* package id */
 	u32 svtdro;	/* dro vaule */
-	u64 chipid;	/* chip serial number */
+	u64 chipid;	/* chip ID: bank7 bit191~251, 61 bits */
 	u32 soc_id;	/* soc id */
 	char *name;	/* chip name */
 } soc_info;
@@ -46,6 +46,7 @@ static const struct spacemit_soc_id {
 
 	/* k3 serial soc */
 	{ "K3-6370", 0x36090000 },
+	{ "K3-6370-V1B", 0x3609001B },  /* K3 with pack_id=0x1B variant */
 };
 
 
@@ -121,10 +122,20 @@ static int spacemit_get_soc_info(struct device *dev)
 		dev_err(dev, "try to get soc_svt_dro from efuse failed\n");
 	}
 
-	size = socinfo_get_nvparam(dev, "soc_chip_id",
-			(char *)&soc_info.chipid, sizeof(soc_info.chipid));
-	if (size <= 0) {
-		dev_err(dev, "try to get soc_chip_id from efuse failed\n");
+	/* Read chip ID: bank7 bit191~251 (61 bits)
+	 * NVMEM core extracts exactly these bits via bits=<7 61> in DTS,
+	 * result is right-shifted to start at bit 0.
+	 * Use 9-byte local buf because NVMEM cell->bytes = DIV_ROUND_UP(7+61, 8) = 9.
+	 */
+	{
+		u8 chipid_buf[9] = {0};
+		size = socinfo_get_nvparam(dev, "soc_chip_id",
+				chipid_buf, sizeof(chipid_buf));
+		if (size <= 0) {
+			dev_err(dev, "try to get soc_chip_id from efuse failed\n");
+		} else {
+			memcpy(&soc_info.chipid, chipid_buf, sizeof(soc_info.chipid));
+		}
 	}
 
 	soc_info.soc_id = (soc_info.die_id << 16) | soc_info.pack_id;

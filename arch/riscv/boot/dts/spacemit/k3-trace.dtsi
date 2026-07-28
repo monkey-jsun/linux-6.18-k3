@@ -537,7 +537,6 @@
 		cluster0_funnel: funnel@d9000000 {
 			compatible = "riscv,trace-funnel";
 			reg = <0x0 0xd9000000 0x0 0x1000>;
-			cpus = <&cpu_0>, <&cpu_1>, <&cpu_2>, <&cpu_3>;
 			riscv,timestamp-present;
 			out-ports {
 				port {
@@ -583,7 +582,6 @@
 		cluster1_funnel: funnel@d9010000 {
 			compatible = "riscv,trace-funnel";
 			reg = <0x0 0xd9010000 0x0 0x1000>;
-			cpus = <&cpu_4>, <&cpu_5>, <&cpu_6>, <&cpu_7>;
 			riscv,timestamp-present;
 			out-ports {
 				port {
@@ -629,7 +627,6 @@
 		cluster2_funnel: funnel@d9020000 {
 			compatible = "riscv,trace-funnel";
 			reg = <0x0 0xd9020000 0x0 0x1000>;
-			cpus = <&cpu_8>, <&cpu_9>, <&cpu_10>, <&cpu_11>;
 			riscv,timestamp-present;
 			out-ports {
 				port {
@@ -675,7 +672,6 @@
 		cluster3_funnel: funnel@d9030000 {
 			compatible = "riscv,trace-funnel";
 			reg = <0x0 0xd9030000 0x0 0x1000>;
-			cpus = <&cpu_12>, <&cpu_13>, <&cpu_14>, <&cpu_15>;
 			riscv,timestamp-present;
 			out-ports {
 				port {

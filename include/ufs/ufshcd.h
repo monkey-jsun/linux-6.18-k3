@@ -695,6 +695,13 @@ enum ufshcd_quirks {
 	 * because it causes link startup to become unreliable.
 	 */
 	UFSHCD_QUIRK_PERFORM_LINK_STARTUP_ONCE		= 1 << 26,
+
+	/*
+	 * This quirk indicates that the controller cannot have SCSI data
+	 * transfers in opposite directions outstanding at the same time in
+	 * legacy single doorbell mode.
+	 */
+	UFSHCD_QUIRK_BROKEN_MIXED_DATA_DIR		= 1 << 27,
 };
 
 enum ufshcd_caps {

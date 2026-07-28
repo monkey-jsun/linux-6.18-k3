@@ -308,6 +308,7 @@ static int funnel_runtime_resume(struct device *dev)
 #endif
 
 static const struct dev_pm_ops funnel_dev_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
 	SET_RUNTIME_PM_OPS(funnel_runtime_suspend, funnel_runtime_resume, NULL)
 };
 
@@ -364,7 +365,7 @@ static struct platform_driver funnel_driver = {
 		/* THIS_MODULE is taken care of by platform_driver_register() */
 		.of_match_table = funnel_match,
 		.acpi_match_table = ACPI_PTR(funnel_acpi_ids),
-		.pm	= &funnel_dev_pm_ops,
+		.pm	= pm_ptr(&funnel_dev_pm_ops),
 		.suppress_bind_attrs = true,
 	},
 };
@@ -404,7 +405,7 @@ MODULE_DEVICE_TABLE(amba, dynamic_funnel_ids);
 static struct amba_driver dynamic_funnel_driver = {
 	.drv = {
 		.name	= "coresight-dynamic-funnel",
-		.pm	= &funnel_dev_pm_ops,
+		.pm	= pm_ptr(&funnel_dev_pm_ops),
 		.suppress_bind_attrs = true,
 	},
 	.probe		= dynamic_funnel_probe,

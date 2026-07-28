@@ -7370,22 +7370,23 @@ rtl8127_get_phy_state(struct rtl8127_private *tp)
         return (rtl8127_mdio_direct_read_phy_ocp(tp, 0xA420) & 0x7);
 }
 
-static void
+static int
 rtl8127_wait_phy_ups_resume(struct net_device *dev, u16 PhyState)
 {
         struct rtl8127_private *tp = netdev_priv(dev);
         int i;
 
-        for (i=0; i< 100; i++) {
+        for (i = 0; i < 100; i++) {
                 if (rtl8127_get_phy_state(tp) == PhyState)
-                        break;
-                else
-                        mdelay(1);
+                        return 0;
+
+                mdelay(1);
         }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
         WARN_ON_ONCE(i == 100);
 #endif
+        return -ETIMEDOUT;
 }
 
 static void
@@ -7422,11 +7423,12 @@ rtl8127_disable_now_is_oob(struct rtl8127_private *tp)
                 RTL_W8(tp, MCUCmd_reg, RTL_R8(tp, MCUCmd_reg) & ~Now_is_oob);
 }
 
-static void
+static int
 rtl8127_exit_oob(struct net_device *dev)
 {
         struct rtl8127_private *tp = netdev_priv(dev);
         u16 data16;
+        int retval;
 
         rtl8127_disable_rx_packet_filter(tp);
 
@@ -7459,10 +7461,15 @@ rtl8127_exit_oob(struct net_device *dev)
 
         //wait ups resume (phy state 2)
         if (rtl8127_is_ups_resume(dev)) {
-                rtl8127_wait_phy_ups_resume(dev, 2);
+                retval = rtl8127_wait_phy_ups_resume(dev, 2);
+                if (retval)
+                        return retval;
+
                 rtl8127_clear_ups_resume_bit(dev);
                 rtl8127_clear_phy_ups_reg(dev);
         }
+
+        return 0;
 }
 
 void
@@ -14449,7 +14456,9 @@ rtl8127_init_one(struct pci_dev *pdev,
         if (rc < 0)
                 goto err_out;
 
-        rtl8127_exit_oob(dev);
+        rc = rtl8127_exit_oob(dev);
+        if (rc)
+                goto err_out;
 
         rtl8127_powerup_pll(dev);
 
@@ -14798,6 +14807,18 @@ int rtl8127_open(struct net_device *dev)
 {
         struct rtl8127_private *tp = netdev_priv(dev);
         int retval;
+        u16 vendor = 0xffff;
+
+        /*
+         * Device may become inaccessible after suspend/resume while still
+         * remaining bound to the driver. Perform a simple accessibility check
+         * here before accessing device registers.
+         */
+        retval = pci_read_config_word(tp->pci_dev, PCI_VENDOR_ID, &vendor);
+        if (retval || vendor != PCI_VENDOR_ID_REALTEK) {
+                netdev_err(dev, "r8127 device inaccessible, aborting open\n");
+                return -ENODEV;
+        }
 
         retval = -ENOMEM;
 
@@ -14840,7 +14861,9 @@ int rtl8127_open(struct net_device *dev)
         rtl8127_enable_napi(tp);
 #endif
 
-        rtl8127_exit_oob(dev);
+        retval = rtl8127_exit_oob(dev);
+        if (retval < 0)
+                goto err_exit_oob;
 
         rtl8127_up(dev);
 
@@ -14868,6 +14891,13 @@ int rtl8127_open(struct net_device *dev)
 out:
 
         return retval;
+
+err_exit_oob:
+#ifdef CONFIG_R8127_NAPI
+        rtl8127_disable_napi(tp);
+#endif
+        pci_clear_master(tp->pci_dev);
+        rtl8127_free_irq(tp);
 
 err_free_all_allocated_mem:
         rtl8127_free_alloc_resources(tp);
@@ -17901,7 +17931,11 @@ rtl8127_resume(struct device *device)
 
         pci_set_master(pdev);
 
-        rtl8127_exit_oob(dev);
+        err = rtl8127_exit_oob(dev);
+        if (err) {
+                pci_clear_master(pdev);
+                goto out_unlock;
+        }
 
         rtl8127_up(dev);
 
@@ -17914,7 +17948,8 @@ rtl8127_resume(struct device *device)
         //mod_timer(&tp->esd_timer, jiffies + RTL8127_ESD_TIMEOUT);
         //mod_timer(&tp->link_timer, jiffies + RTL8127_LINK_TIMEOUT);
 out_unlock:
-        netif_device_attach(dev);
+        if (!err)
+                netif_device_attach(dev);
 
         rtnl_unlock();
 

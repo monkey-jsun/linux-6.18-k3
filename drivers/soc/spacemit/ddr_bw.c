@@ -39,12 +39,12 @@ struct ddr_perf_stat {
 };
 
 struct ddr_perf_raw_stat {
-	__u64 window;
-	__u64 read_bytes;
-	__u64 write_bytes;
-	__u64 read_reqs;
-	__u64 write_reqs;
-	__u64 read_latency;
+	u32 window;
+	u32 read_bytes;
+	u32 write_bytes;
+	u32 read_reqs;
+	u32 write_reqs;
+	u32 read_latency;
 };
 
 struct ddr_perf_prev_stat {
@@ -91,22 +91,22 @@ static u32 ddr_perf_clamp_u64_to_u32(u64 val)
 	return val > U32_MAX ? U32_MAX : (u32)val;
 }
 
-static void ddr_perf_read_current_stat(struct ddr_perf_stat *stat,
+static u32 ddr_perf_delta_scaled(u32 cur, u32 old)
+{
+	u32 delta = cur - old;		/* modulo-2^32: wrap-safe */
+
+	return ddr_perf_clamp_u64_to_u32((u64)delta * 16ULL);
+}
+
+static void ddr_perf_read_current_stat(u32 port_id,
 				       struct ddr_perf_raw_stat *raw_stat)
 {
-	raw_stat->window = (u64)read_axi_mon_sum(stat->port_id, 0) * 16ULL;
-	raw_stat->read_reqs = (u64)read_axi_mon_sum(stat->port_id, 1) * 16ULL;
-	raw_stat->write_reqs = (u64)read_axi_mon_sum(stat->port_id, 9) * 16ULL;
-	raw_stat->read_bytes = (u64)read_axi_mon_sum(stat->port_id, 16) * 16ULL;
-	raw_stat->write_bytes = (u64)read_axi_mon_sum(stat->port_id, 18) * 16ULL;
-	raw_stat->read_latency = (u64)read_axi_mon_sum(stat->port_id, 5) * 16ULL;
-
-	stat->window = ddr_perf_clamp_u64_to_u32(raw_stat->window);
-	stat->read_reqs = ddr_perf_clamp_u64_to_u32(raw_stat->read_reqs);
-	stat->write_reqs = ddr_perf_clamp_u64_to_u32(raw_stat->write_reqs);
-	stat->read_bytes = ddr_perf_clamp_u64_to_u32(raw_stat->read_bytes);
-	stat->write_bytes = ddr_perf_clamp_u64_to_u32(raw_stat->write_bytes);
-	stat->read_latency = ddr_perf_clamp_u64_to_u32(raw_stat->read_latency);
+	raw_stat->window       = read_axi_mon_sum(port_id, 0);
+	raw_stat->read_reqs    = read_axi_mon_sum(port_id, 1);
+	raw_stat->write_reqs   = read_axi_mon_sum(port_id, 9);
+	raw_stat->read_bytes   = read_axi_mon_sum(port_id, 16);
+	raw_stat->write_bytes  = read_axi_mon_sum(port_id, 18);
+	raw_stat->read_latency = read_axi_mon_sum(port_id, 5);
 }
 
 static void ddr_perf_calc_delta(struct ddr_perf_stat *cur,
@@ -129,12 +129,12 @@ static void ddr_perf_calc_delta(struct ddr_perf_stat *cur,
 
 	old = prev->stat;
 
-	cur->window = ddr_perf_clamp_u64_to_u32(cur_raw->window - old.window);
-	cur->read_reqs = ddr_perf_clamp_u64_to_u32(cur_raw->read_reqs - old.read_reqs);
-	cur->write_reqs = ddr_perf_clamp_u64_to_u32(cur_raw->write_reqs - old.write_reqs);
-	cur->read_bytes = ddr_perf_clamp_u64_to_u32(cur_raw->read_bytes - old.read_bytes);
-	cur->write_bytes = ddr_perf_clamp_u64_to_u32(cur_raw->write_bytes - old.write_bytes);
-	cur->read_latency = ddr_perf_clamp_u64_to_u32(cur_raw->read_latency - old.read_latency);
+	cur->window       = ddr_perf_delta_scaled(cur_raw->window,       old.window);
+	cur->read_reqs    = ddr_perf_delta_scaled(cur_raw->read_reqs,    old.read_reqs);
+	cur->write_reqs   = ddr_perf_delta_scaled(cur_raw->write_reqs,   old.write_reqs);
+	cur->read_bytes   = ddr_perf_delta_scaled(cur_raw->read_bytes,   old.read_bytes);
+	cur->write_bytes  = ddr_perf_delta_scaled(cur_raw->write_bytes,  old.write_bytes);
+	cur->read_latency = ddr_perf_delta_scaled(cur_raw->read_latency, old.read_latency);
 
 	prev->stat = *cur_raw;
 }
@@ -172,7 +172,7 @@ static long ddr_perf_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 			return -EINVAL;
 
 		mutex_lock(&perf_lock);
-		ddr_perf_read_current_stat(&stat, &raw_stat);
+		ddr_perf_read_current_stat(stat.port_id, &raw_stat);
 		ddr_perf_calc_delta(&stat, &raw_stat, &prev_stats[stat.port_id]);
 		mutex_unlock(&perf_lock);
 

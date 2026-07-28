@@ -609,9 +609,8 @@ static int cvdev_config_path(struct ccic_vnode *sc_vnode,
 	return 0;
 }
 
-static unsigned int cvdev_sensor_link_freq_mbps(struct ccic_vnode *sc_vnode)
+static unsigned int cvdev_sensor_link_freq_mbps(struct v4l2_subdev *sensor_sd)
 {
-	struct v4l2_subdev *sensor_sd = sc_vnode->ccic_dev->sensor_sd;
 	struct v4l2_ctrl *link_freq;
 	s64 freq;
 
@@ -637,17 +636,33 @@ static int cvdev_config_default_path(struct ccic_vnode *sc_vnode)
 	struct ccic_dev *ccic_dev = sc_vnode->ccic_dev;
 	unsigned int csi_id = ccic_dev->index;
 	unsigned int path_id = sc_vnode->idx % PATH_NUM_PER_DEV;
-	unsigned int lane_num = ccic_dev->default_lane_num ?: sc_vnode->lane_num;
-	unsigned int mipi_m_bps = cvdev_sensor_link_freq_mbps(sc_vnode);
+	struct v4l2_subdev *sensor_sd;
+	unsigned int default_lane_num;
+	unsigned int default_mipi_m_bps;
+	unsigned int lane_num;
+	unsigned int mipi_m_bps;
 
 	if (csi_id >= CCIC_CSI_DEV_MAX)
 		return -EINVAL;
 
+	mutex_lock(&ccic_dev->sensor_lock);
+	sensor_sd = ccic_dev->sensor_sd;
+	default_lane_num = ccic_dev->default_lane_num;
+	default_mipi_m_bps = ccic_dev->default_mipi_m_bps;
+	mipi_m_bps = cvdev_sensor_link_freq_mbps(sensor_sd);
+	mutex_unlock(&ccic_dev->sensor_lock);
+
+	if (!sensor_sd) {
+		dev_dbg(ccic_dev->dev, "%s(%s) no bound sensor subdev\n",
+			__func__, sc_vnode->name);
+		return -ENODEV;
+	}
+
+	lane_num = default_lane_num ?: sc_vnode->lane_num;
 	if (!lane_num)
 		lane_num = 2;
 	if (!mipi_m_bps)
-		mipi_m_bps = ccic_dev->default_mipi_m_bps ?:
-			      sc_vnode->mipi_m_bps;
+		mipi_m_bps = default_mipi_m_bps ?: sc_vnode->mipi_m_bps;
 	if (!mipi_m_bps)
 		mipi_m_bps = 914;
 
@@ -669,19 +684,23 @@ static void cvdev_return_all_buffers(struct ccic_vnode *sc_vnode,
 static int cvdev_sensor_stream_get(struct ccic_vnode *sc_vnode)
 {
 	struct ccic_dev *ccic_dev = sc_vnode->ccic_dev;
+	struct v4l2_subdev *sensor_sd;
 	struct device *dev = ccic_dev->dev;
 	int ret = 0;
 
-	if (!ccic_dev->sensor_sd) {
+	mutex_lock(&ccic_dev->sensor_stream_lock);
+	mutex_lock(&ccic_dev->sensor_lock);
+	sensor_sd = ccic_dev->sensor_sd;
+	mutex_unlock(&ccic_dev->sensor_lock);
+	if (!sensor_sd) {
+		mutex_unlock(&ccic_dev->sensor_stream_lock);
 		dev_err(dev, "%s(%s) no bound sensor subdev\n",
 			__func__, sc_vnode->name);
 		return -ENODEV;
 	}
 
-	mutex_lock(&ccic_dev->sensor_stream_lock);
 	if (!ccic_dev->sensor_stream_count) {
-		ret = v4l2_subdev_call(ccic_dev->sensor_sd, video,
-				       s_stream, 1);
+		ret = v4l2_subdev_call(sensor_sd, video, s_stream, 1);
 		if (ret && ret != -ENOIOCTLCMD) {
 			dev_err(dev, "%s(%s) sensor stream on failed ret=%d\n",
 				__func__, sc_vnode->name, ret);
@@ -698,11 +717,17 @@ static int cvdev_sensor_stream_get(struct ccic_vnode *sc_vnode)
 static void cvdev_sensor_stream_put(struct ccic_vnode *sc_vnode)
 {
 	struct ccic_dev *ccic_dev = sc_vnode->ccic_dev;
-
-	if (!ccic_dev->sensor_sd)
-		return;
+	struct v4l2_subdev *sensor_sd;
 
 	mutex_lock(&ccic_dev->sensor_stream_lock);
+	mutex_lock(&ccic_dev->sensor_lock);
+	sensor_sd = ccic_dev->sensor_sd;
+	mutex_unlock(&ccic_dev->sensor_lock);
+	if (!sensor_sd) {
+		mutex_unlock(&ccic_dev->sensor_stream_lock);
+		return;
+	}
+
 	if (!ccic_dev->sensor_stream_count) {
 		dev_warn(ccic_dev->dev, "%s(%s) sensor stream underflow\n",
 			 __func__, sc_vnode->name);
@@ -712,7 +737,7 @@ static void cvdev_sensor_stream_put(struct ccic_vnode *sc_vnode)
 
 	ccic_dev->sensor_stream_count--;
 	if (!ccic_dev->sensor_stream_count)
-		v4l2_subdev_call(ccic_dev->sensor_sd, video, s_stream, 0);
+		v4l2_subdev_call(sensor_sd, video, s_stream, 0);
 	mutex_unlock(&ccic_dev->sensor_stream_lock);
 }
 
@@ -1444,6 +1469,18 @@ static int cvdev_vidioc_try_fmt_vid_cap(struct file *file, void *fh, struct v4l2
 	return 0;
 }
 
+static bool cvdev_sensor_is_bound(struct ccic_vnode *sc_vnode)
+{
+	struct ccic_dev *ccic_dev = sc_vnode->ccic_dev;
+	bool bound;
+
+	mutex_lock(&ccic_dev->sensor_lock);
+	bound = !!ccic_dev->sensor_sd;
+	mutex_unlock(&ccic_dev->sensor_lock);
+
+	return bound;
+}
+
 static int cvdev_vidioc_s_parm(struct file *file, void *fh, struct v4l2_streamparm *a)
 {
 	struct video_device *vnode = video_devdata(file);
@@ -1453,15 +1490,31 @@ static int cvdev_vidioc_s_parm(struct file *file, void *fh, struct v4l2_streampa
 	struct ccic_path_default path = { 0 };
 	int ret = 0;
 
+	mutex_lock(&sc_vnode->mlock);
+	if (!cvdev_sensor_is_bound(sc_vnode)) {
+		dev_dbg(dev, "%s(%s) no bound sensor subdev\n",
+			__func__, sc_vnode->name);
+		ret = -ENODEV;
+		goto out_unlock;
+	}
+	if (vb2_is_streaming(&sc_vnode->buf_queue)) {
+		dev_err(dev, "%s(%s) cannot reconfigure path while streaming\n",
+			__func__, sc_vnode->name);
+		ret = -EBUSY;
+		goto out_unlock;
+	}
+
 	if (out_path_param->mode_param.mode >= CSI_WORK_MODE_MAX) {
 		dev_err(dev, "%s(%s) invalid csi work mode %u\n", __func__, sc_vnode->name,
 				out_path_param->mode_param.mode);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto out_unlock;
 	}
 	if (out_path_param->dma_channel >= MAX_CCIC_DMA_CNT) {
 		dev_err(dev, "%s(%s) invalid dma channel %u\n", __func__, sc_vnode->name,
 				out_path_param->dma_channel);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto out_unlock;
 	}
 	path.mode = out_path_param->mode_param.mode;
 	path.dt_filter_en = out_path_param->mode_param.dt_filter_en;
@@ -1473,10 +1526,10 @@ static int cvdev_vidioc_s_parm(struct file *file, void *fh, struct v4l2_streampa
 	path.dt_filter1 = out_path_param->filter1_pattern;
 
 	ret = cvdev_config_path(sc_vnode, &path,
-				out_path_param->phy_param.lane_num,
-				out_path_param->phy_param.mipi_mbps);
+					out_path_param->phy_param.lane_num,
+					out_path_param->phy_param.mipi_mbps);
 	if (ret)
-		return ret;
+		goto out_unlock;
 	dev_info(dev,
 			"%s mode %u dt_en %u vc %u filter0_en %u filter0 %u filter1_en %u filter1 %u lanes %u mipi_bps %u\n",
 			sc_vnode->name, out_path_param->mode_param.mode, out_path_param->mode_param.dt_filter_en,
@@ -1484,7 +1537,10 @@ static int cvdev_vidioc_s_parm(struct file *file, void *fh, struct v4l2_streampa
 			out_path_param->dt_filter1_en, out_path_param->filter1_pattern,
 			out_path_param->phy_param.lane_num, out_path_param->phy_param.mipi_mbps);
 	dev_info(dev, "%s set dma ch %u\n", sc_vnode->name, out_path_param->dma_channel);
-	return 0;
+
+out_unlock:
+	mutex_unlock(&sc_vnode->mlock);
+	return ret;
 }
 
 static long cvdev_vidioc_default(struct file *file,

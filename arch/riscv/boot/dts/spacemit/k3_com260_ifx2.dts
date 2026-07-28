@@ -29,6 +29,18 @@
 };
 
 &pinctrl {
+	uart4-0-cfg {
+		uart4-0-pins {
+			power-source = <3300>;
+		};
+	};
+
+	uart5-2-cfg {
+		uart5-0-pins {
+			power-source = <3300>;
+		};
+	};
+
 	can3-1-cfg {
 		can3-0-pins {
 			power-source = <1800>;
@@ -46,6 +58,18 @@
 			power-source = <1800>;
 		};
 	};
+};
+
+&uart4 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart4_0_cfg>;
+	status = "okay";
+};
+
+&uart5 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart5_2_cfg>;
+	status = "okay";
 };
 
 &eth1 {

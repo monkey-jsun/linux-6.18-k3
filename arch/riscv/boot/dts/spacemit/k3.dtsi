@@ -224,6 +224,34 @@
 			no-map;
 		};
 
+		/*
+		 * Merged no-map region for rcpu hibernation misc state.
+		 * Owner: k3-rproc driver (rcpu1 probe path), referenced via
+		 * hibernation_snap[0] and rcpu1 memory-region.
+		 * Firmware ABI (must stay in sync with OpenSBI and rcpu firmware):
+		 *   +0x000000 (0x000400): rcpu_hiber_rtsp — rcpu hibernate runtime stack pointer
+		 *   +0x000400 (0x001000): hiber_apuse     — AP persistent state (survives image restore)
+		 *   +0x001400 (0x084000): snap_srrpi      — SRAM + RPMI snapshots
+		 */
+		hibernation_nomap: hibernation_nomap@100700000 {
+			reg = <0x1 0x700000 0x0 0x85400>;
+			no-map;
+		};
+
+		/*
+		 * Contiguous snapshot storage for rcpu DRAM and OpenSBI.
+		 * Owner: k3-rproc driver (rcpu1 probe path), referenced via
+		 * hibernation_snap[1] and rcpu1 memory-region.
+		 * Firmware ABI (must stay in sync with rcpu firmware):
+		 *   +0x000000 (0x500000): rcpu0 DRAM snapshot — 5 MiB
+		 *   +0x500000 (0x500000): rcpu1 DRAM snapshot — 5 MiB
+		 *   +0xa00000 (0x200000): OpenSBI snapshot     — 2 MiB
+		 */
+		hibernation_snap_rcpu: hibernation_snap_rcpu@100f00000 {
+			reg = <0x1 0xf00000 0x0 0xc00000>;
+			no-map;
+		};
+
 		/* reserved 5M for dpu, including mmu table and cmdlist */
 		dpu_resv0: dpu_reserved@101b00000 {
 			compatible = "shared-dma-pool";
@@ -1293,6 +1321,7 @@
 			firmware-name = "rt24_os1_rcpu.elf";
 			memory-region = <&rcpu1_runtime>, <&rcpu1_heap>, <&rcpu1_vdev0vring0>, <&rcpu1_vdev0buffer>,
 					<&rcpu1_vdev0vring1>, <&rcpu1_rsc_table>;
+			hibernation_snap = <&hibernation_nomap>, <&hibernation_snap_rcpu>;
 			status = "okay";
 		};
 
@@ -1793,6 +1822,30 @@
 			queue1 {
 				snps,dcb-algorithm;
 			};
+		};
+
+		gmac_uio0: uio@cac80000 {
+			compatible = "k3,stmmac-uio";
+			spacemit,ethernet = <&eth0>;
+			status = "disabled";
+		};
+
+		gmac_uio1: uio@cac82000 {
+			compatible = "k3,stmmac-uio";
+			spacemit,ethernet = <&eth1>;
+			status = "disabled";
+		};
+
+		gmac_uio2: uio@cac8e000 {
+			compatible = "k3,stmmac-uio";
+			spacemit,ethernet = <&eth2>;
+			status = "disabled";
+		};
+
+		gmac_uio3: uio@a0000000 {
+			compatible = "k3,stmmac-uio";
+			spacemit,ethernet = <&eth3>;
+			status = "disabled";
 		};
 
 		eth0: ethernet@cac80000 {
@@ -2661,9 +2714,14 @@
 					bits = <5 9>;
 				};
 
+				/* Chip ID: bank7 bit191~251 (61 bits)
+				 * offset 0x17 (23) from bank7 start, spans 9 bytes
+				 * (byte 23 ~ byte 31), matches U-Boot's fuses[9]
+				 * bit 7 of byte 23 is global bit 191
+				 */
 				soc_chip_id: bank7@17,7 {
-					reg = <0x17 8>;
-					bits = <7 55>;
+					reg = <0x17 9>;
+					bits = <7 61>;
 				};
 			};
 		};

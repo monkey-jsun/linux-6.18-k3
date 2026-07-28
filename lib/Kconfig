@@ -100,7 +100,7 @@ config ARCH_USE_SYM_ANNOTATIONS
 
 config INDIRECT_PIO
 	bool "Access I/O in non-MMIO mode"
-	depends on ARM64
+	depends on ARM64 || RISCV
 	depends on HAS_IOPORT
 	help
 	  On some platforms where no separate I/O space exists, there are I/O
