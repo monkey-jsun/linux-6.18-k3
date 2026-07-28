@@ -477,10 +477,16 @@ static int k1_pcie_init(struct dw_pcie_rp *pp)
 
 	/* Start by asserting fundamental reset (drive PERST# low). */
 #ifdef CONFIG_SOC_SPACEMIT_K3
-	/* K3: Set IGNORE_PERSTN and drive PERSTN_OUT low (assert reset) */
-	regmap_update_bits(k1->pmu, k1->pmu_off + PCIE_CONTROL_LOGIC,
-			   PCIE_IGNORE_PERSTN | PCIE_PERSTN_OE | PCIE_PERSTN_OUT,
-			   PCIE_IGNORE_PERSTN | PCIE_PERSTN_OE);
+	/* Assert PERST# via GPIO if available, otherwise use controller register */
+	if (k1->pci.pe_rst) {
+		ret = gpiod_direction_output(k1->pci.pe_rst, 1);
+		if (ret)
+			return ret;
+	} else {
+		regmap_update_bits(k1->pmu, k1->pmu_off + PCIE_CONTROL_LOGIC,
+				   PCIE_IGNORE_PERSTN | PCIE_PERSTN_OE | PCIE_PERSTN_OUT,
+				   PCIE_IGNORE_PERSTN | PCIE_PERSTN_OE);
+	}
 #else
 	/* K1: Write, then read it back to guarantee the write
 	 * reaches the device before we start the delay.
@@ -530,9 +536,12 @@ static int k1_pcie_init(struct dw_pcie_rp *pp)
 	 * Vaux (3.3v) is present.
 	 */
 #ifdef CONFIG_SOC_SPACEMIT_K3
-	regmap_update_bits(k1->pmu, k1->pmu_off + PCIE_CONTROL_LOGIC,
-			   PCIE_PERSTN_OUT | PCIE_PERSTN_OE,
-			   PCIE_PERSTN_OUT | PCIE_PERSTN_OE);
+	if (k1->pci.pe_rst)
+		gpiod_set_value_cansleep(k1->pci.pe_rst, 0);
+	else
+		regmap_update_bits(k1->pmu, k1->pmu_off + PCIE_CONTROL_LOGIC,
+				   PCIE_PERSTN_OUT | PCIE_PERSTN_OE,
+				   PCIE_PERSTN_OUT | PCIE_PERSTN_OE);
 	spacemit_pcie_eq_preset(k1);
 #endif
 
@@ -919,10 +928,16 @@ static int k1_pcie_resume_noirq(struct device *dev)
 
 	/* Start by asserting fundamental reset (drive PERST# low). */
 #ifdef CONFIG_SOC_SPACEMIT_K3
-	/* K3: Set IGNORE_PERSTN and drive PERSTN_OUT low (assert reset) */
-	regmap_update_bits(k1->pmu, k1->pmu_off + PCIE_CONTROL_LOGIC,
-			   PCIE_IGNORE_PERSTN | PCIE_PERSTN_OE | PCIE_PERSTN_OUT,
-			   PCIE_IGNORE_PERSTN | PCIE_PERSTN_OE);
+	/* Assert PERST# via GPIO if available, otherwise use controller register */
+	if (k1->pci.pe_rst) {
+		ret = gpiod_direction_output(k1->pci.pe_rst, 1);
+		if (ret)
+			return ret;
+	} else {
+		regmap_update_bits(k1->pmu, k1->pmu_off + PCIE_CONTROL_LOGIC,
+				   PCIE_IGNORE_PERSTN | PCIE_PERSTN_OE | PCIE_PERSTN_OUT,
+				   PCIE_IGNORE_PERSTN | PCIE_PERSTN_OE);
+	}
 #else
 	/* K1: Write, then read it back to guarantee the write
 	 * reaches the device before we start the delay.
@@ -966,9 +981,12 @@ static int k1_pcie_resume_noirq(struct device *dev)
 	 * Vaux (3.3v) is present.
 	 */
 #ifdef CONFIG_SOC_SPACEMIT_K3
-	regmap_update_bits(k1->pmu, k1->pmu_off + PCIE_CONTROL_LOGIC,
-			   PCIE_PERSTN_OUT | PCIE_PERSTN_OE,
-			   PCIE_PERSTN_OUT | PCIE_PERSTN_OE);
+	if (k1->pci.pe_rst)
+		gpiod_set_value_cansleep(k1->pci.pe_rst, 0);
+	else
+		regmap_update_bits(k1->pmu, k1->pmu_off + PCIE_CONTROL_LOGIC,
+				   PCIE_PERSTN_OUT | PCIE_PERSTN_OE,
+				   PCIE_PERSTN_OUT | PCIE_PERSTN_OE);
 	spacemit_pcie_eq_preset(k1);
 #endif
 
