@@ -637,6 +637,8 @@ static int dsi_write_cmd_array(struct spacemit_dsi_device *dsi_ctx,
 		case SPACEMIT_DSI_DCS_SWRITE:
 		case SPACEMIT_DSI_DCS_SWRITE1:
 		case SPACEMIT_DSI_DCS_READ:
+		case SPACEMIT_DSI_GENERIC_WRITE1:
+		case SPACEMIT_DSI_GENERIC_WRITE2:
 		case SPACEMIT_DSI_GENERIC_READ1:
 		case SPACEMIT_DSI_SET_MAX_PKT_SIZE:
 			memcpy(&parameter[1], cmd_line.data, len);
