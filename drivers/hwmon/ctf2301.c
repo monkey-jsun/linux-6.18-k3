@@ -44,6 +44,7 @@
 #define PWM_AND_TACH_CFG_PWPGM			BIT(5)
 
 #define PWM_DEFAULT_FREQ_CODE			0x17
+#define CTF2301_PWM_MAX				255
 
 
 struct ctf2301 {
@@ -53,6 +54,7 @@ struct ctf2301 {
 	struct thermal_cooling_device *cdev;
 
 	unsigned int pwm_freq_code;
+	unsigned int pwm_save;		/* Saved PWM value for suspend/resume */
 	bool temp_signed;
 };
 
@@ -134,9 +136,9 @@ static int ctf2301_update_pwm(struct ctf2301 *data, long val)
 {
 	int map_val;
 
-	val = clamp_val(val, 0, 255);
+	val = clamp_val(val, 0, CTF2301_PWM_MAX);
 
-	map_val = (val * data->pwm_freq_code * 2) / 255;
+	map_val = (val * data->pwm_freq_code * 2) / CTF2301_PWM_MAX;
 
 	return regmap_write(data->regmap, CTF2301_PWM_VALUE, map_val);
 }
@@ -181,10 +183,10 @@ static int ctf2301_read_pwm(struct device *dev, u32 attr, long *val)
 		if (freq_code == 0)
 			freq_code = 1;
 
-		*val = (reg_val * 255) / (freq_code * 2);
+		*val = (reg_val * CTF2301_PWM_MAX) / (freq_code * 2);
 
-		if (*val > 255)
-			*val = 255;
+		if (*val > CTF2301_PWM_MAX)
+			*val = CTF2301_PWM_MAX;
 		break;
 
 	case hwmon_pwm_freq:
@@ -267,7 +269,7 @@ static int ctf2301_write(struct device *dev, enum hwmon_sensor_types type,
 static int ctf2301_cdev_get_max_state(struct thermal_cooling_device *cdev,
 				 unsigned long *state)
 {
-	*state = 255;
+	*state = CTF2301_PWM_MAX;
 	return 0;
 }
 
@@ -283,9 +285,9 @@ static int ctf2301_cdev_get_cur_state(struct thermal_cooling_device *cdev,
 	if (err)
 		return err;
 
-	val = (reg_val * 255) / (data->pwm_freq_code * 2);
+	val = (reg_val * CTF2301_PWM_MAX) / (data->pwm_freq_code * 2);
 
-	*state = clamp_val(val, 0, 255);
+	*state = clamp_val(val, 0, CTF2301_PWM_MAX);
 
 	return 0;
 }
@@ -355,6 +357,8 @@ static int ctf2301_probe(struct i2c_client *client)
 
 	ctf2301->client = client;
 
+	i2c_set_clientdata(client, ctf2301);
+
 	ctf2301_parse_dt(client->dev.of_node, ctf2301);
 
 	ctf2301->regmap = devm_regmap_init_i2c(client, &ctf2301_regmap_config);
@@ -379,7 +383,13 @@ static int ctf2301_probe(struct i2c_client *client)
 				     "failed to write CTF2301_PWM_AND_TACH_CFG");
 
 	/* default to enable the fan */
-	ctf2301_update_pwm(ctf2301, 255);
+	ctf2301_update_pwm(ctf2301, CTF2301_PWM_MAX);
+	/*
+	 * Fail-safe default for suspend/resume: if the very first suspend
+	 * ever hits a PWM read failure before a real value was cached, fall
+	 * back to full speed rather than leaving the fan off.
+	 */
+	ctf2301->pwm_save = CTF2301_PWM_MAX;
 
 	hwmon_dev = devm_hwmon_device_register_with_info(dev, client->name, ctf2301,
 							 &ctf2301_chip_info,
@@ -407,10 +417,57 @@ static const struct of_device_id ctf2301_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, ctf2301_of_match);
 
+static int ctf2301_suspend(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct ctf2301 *ctf2301 = i2c_get_clientdata(client);
+	long pwm_val;
+	int ret;
+
+	/* Read current PWM value before suspend */
+	ret = ctf2301_read_pwm(dev, hwmon_pwm_input, &pwm_val);
+	if (ret) {
+		/*
+		 * Keep the last known-good pwm_save on a transient read
+		 * failure instead of clobbering it with 0 -- otherwise a
+		 * single I2C glitch here would permanently leave the fan
+		 * stopped after every future resume.
+		 */
+		dev_warn(dev, "failed to read PWM value before suspend: %d, keeping last saved value %u\n",
+			 ret, ctf2301->pwm_save);
+	} else {
+		ctf2301->pwm_save = (unsigned int)pwm_val;
+	}
+
+	/* Set fan to stop (PWM = 0) */
+	ret = ctf2301_update_pwm(ctf2301, 0);
+	if (ret)
+		dev_warn(dev, "failed to stop fan during suspend: %d\n", ret);
+
+	return 0;
+}
+
+static int ctf2301_resume(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct ctf2301 *ctf2301 = i2c_get_clientdata(client);
+	int ret;
+
+	/* Restore PWM value saved before suspend */
+	ret = ctf2301_update_pwm(ctf2301, ctf2301->pwm_save);
+	if (ret)
+		dev_warn(dev, "failed to restore fan speed after resume: %d\n", ret);
+
+	return ret;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(ctf2301_pm, ctf2301_suspend, ctf2301_resume);
+
 static struct i2c_driver ctf2301_driver = {
 	.driver = {
 		.name	= "ctf2301",
 		.of_match_table = of_match_ptr(ctf2301_of_match),
+		.pm	= pm_sleep_ptr(&ctf2301_pm),
 	},
 	.probe		= ctf2301_probe,
 };
