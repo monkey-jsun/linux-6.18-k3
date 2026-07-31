@@ -119,6 +119,7 @@
 
 	i2c0-0-cfg {
 		i2c0-0-pins {
+			drive-strength = <5>;
 			power-source = <3300>;
 		};
 	};
