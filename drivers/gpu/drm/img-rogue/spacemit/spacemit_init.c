@@ -341,6 +341,7 @@ struct st_context *RgxStInit(PVRSRV_DEVICE_CONFIG* psDevConfig)
 	platform->gpu_active = IMG_FALSE;
 	platform->bEnablePd = IMG_FALSE;
 
+	pm_runtime_set_active(dev);
 	pm_runtime_enable(dev);
 	platform->gpu_clk = devm_clk_get(dev, "clk_rgx");
 	if (IS_ERR_OR_NULL(platform->gpu_clk)) {
