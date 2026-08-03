@@ -117,6 +117,26 @@ static int rpmi_domain_get_attrs(struct spacemit_pm_domain *spd)
 	return 0;
 }
 
+static int rpmi_domain_get_state(struct spacemit_pm_domain *spd)
+{
+	struct rpmi_domain_context *context = spd->context;
+	struct rpmi_mbox_message msg;
+	struct rpmi_domain_get_state_tx tx;
+	struct rpmi_domain_get_state_rx rx;
+	int ret;
+
+	tx.domain_id = cpu_to_le32(spd->pm_index);
+	rpmi_mbox_init_send_with_response(&msg, RPMI_DOMAIN_SRV_GET_STATE,
+					  &tx, sizeof(tx), &rx, sizeof(rx));
+	ret = rpmi_mbox_send_message(context->chan, &msg);
+	if (ret)
+		return ret;
+	if (rx.status)
+		return rpmi_to_linux_error(rx.status);
+
+	return le32_to_cpu(rx.state);
+}
+
 static int rpmi_domain_handle_state(struct spacemit_pm_domain *spd, bool enable)
 {
 	struct rpmi_domain_context *context = spd->context;
@@ -416,7 +436,8 @@ static int spacemit_genpd_start(struct device *dev)
 
 static int spacemit_pm_add_one_domain(struct spacemit_pmu *pmu, struct device_node *node, int num)
 {
-	int err, count, i;
+	int err, count, i, state;
+	bool is_off;
 	struct spacemit_pm_domain *pd;
 	struct rpmi_domain_context *context = dev_get_drvdata(pmu->dev);
 	const char *strings[MAX_REGULATOR_PER_DOMAIN];
@@ -471,7 +492,14 @@ static int spacemit_pm_add_one_domain(struct spacemit_pmu *pmu, struct device_no
 	pd->genpd.dev_ops.stop = spacemit_genpd_stop;
 	pd->genpd.dev_ops.start = spacemit_genpd_start;
 
-	pm_genpd_init(&pd->genpd, NULL, true);
+	state = rpmi_domain_get_state(pd);
+	if (state < 0) {
+		dev_warn(pmu->dev, "domain-%d get state failed: %d, assuming off\n", num, state);
+		is_off = true;
+	} else
+		is_off = (state == RPMI_DEVICE_POWER_STATE_OFF);
+
+	pm_genpd_init(&pd->genpd, NULL, is_off);
 
 	pmu->domains[num] = pd;
 
