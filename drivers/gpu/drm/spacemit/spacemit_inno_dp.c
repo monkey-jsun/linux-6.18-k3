@@ -2097,42 +2097,25 @@ static int soc_dp_conn_get_modes(struct drm_connector *connector)
 	count = drm_edid_connector_add_modes(connector);
 
 	list_for_each_entry_safe(mode, tmp, &connector->probed_modes, head) {
-		if (mode->hdisplay >= 2560) {
-			if (drm_mode_vrefresh(mode) > 90) {
-				list_del(&mode->head);
-				drm_mode_destroy(dev, mode);
-				count--;
-			}
-		}
+		int refresh;
+		bool remove = false;
 
-		if (mode->hdisplay >= 3840) {
-			if (drm_mode_vrefresh(mode) > 60) {
-				list_del(&mode->head);
-				drm_mode_destroy(dev, mode);
-				count--;
-			}
-		}
-	}
+		if (count <= 1)
+			break;
 
-	if (dp->link.max_num_lanes > SOC_DP_LANE_2) {
-		list_for_each_entry_safe(mode, tmp, &connector->probed_modes, head) {
-			if (mode->hdisplay == 3840) {
-				if (drm_mode_vrefresh(mode) > 60) {
-					list_del(&mode->head);
-					drm_mode_destroy(dev, mode);
-					count--;
-				}
-			}
-		}
-	} else {
-		list_for_each_entry_safe(mode, tmp, &connector->probed_modes, head) {
-			if (mode->hdisplay == 3840) {
-				if (drm_mode_vrefresh(mode) > 30) {
-					list_del(&mode->head);
-					drm_mode_destroy(dev, mode);
-					count--;
-				}
-			}
+		refresh = drm_mode_vrefresh(mode);
+
+		if (mode->hdisplay > 3840)
+			remove = true;
+		else if (mode->hdisplay == 3840)
+			remove = refresh > (dp->link.max_num_lanes < SOC_DP_LANE_4 ? 30 : 60);
+		else if (mode->hdisplay >= 2560)
+			remove = refresh > 90;
+
+		if (remove) {
+			list_del(&mode->head);
+			drm_mode_destroy(dev, mode);
+			count--;
 		}
 	}
 
@@ -2153,7 +2136,7 @@ static int soc_dp_conn_get_modes(struct drm_connector *connector)
 		    (!edid_preferred_mode ||
 		     edid_preferred_mode->hdisplay != 1920 ||
 		     edid_preferred_mode->vdisplay != 1080)) {
-			list_for_each_entry_safe(mode, tmp, &connector->probed_modes, head) {
+			list_for_each_entry(mode, &connector->probed_modes, head) {
 				mode->type &= ~DRM_MODE_TYPE_PREFERRED;
 
 				if (!preferred_mode && mode->hdisplay == 1920 &&
@@ -2166,7 +2149,7 @@ static int soc_dp_conn_get_modes(struct drm_connector *connector)
 			if (preferred_mode) {
 				preferred_mode->type |= DRM_MODE_TYPE_PREFERRED;
 				list_move(&preferred_mode->head, &connector->probed_modes);
-			} else {
+			} else if (!list_empty(&connector->probed_modes)) {
 				mode = list_first_entry(&connector->probed_modes,
 							struct drm_display_mode, head);
 				mode->type |= DRM_MODE_TYPE_PREFERRED;
