@@ -1044,8 +1044,7 @@ static const struct of_device_id fsl_qspi_dt_ids[] = {
 MODULE_DEVICE_TABLE(of, fsl_qspi_dt_ids);
 
 static const struct dev_pm_ops fsl_qspi_pm_ops = {
-	.suspend	= fsl_qspi_suspend,
-	.resume		= fsl_qspi_resume,
+	SET_SYSTEM_SLEEP_PM_OPS(fsl_qspi_suspend, fsl_qspi_resume)
 };
 
 static struct platform_driver fsl_qspi_driver = {
