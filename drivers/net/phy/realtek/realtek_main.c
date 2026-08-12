@@ -245,14 +245,24 @@ static int rtl821x_probe(struct phy_device *phydev)
 	return 0;
 }
 
+static void rtl8211f_clear_wake_irq(void *data)
+{
+	dev_pm_clear_wake_irq(data);
+}
+
 static int rtl8211f_probe(struct phy_device *phydev)
 {
 	struct device *dev = &phydev->mdio.dev;
+	bool force_link_poll;
 	int ret;
 
 	ret = rtl821x_probe(phydev);
 	if (ret < 0)
 		return ret;
+
+	force_link_poll = device_property_read_bool(dev, "realtek,link-poll");
+	if (force_link_poll)
+		phydev->dev_flags |= PHY_F_NO_IRQ;
 
 	/* Disable all PME events */
 	ret = phy_write_paged(phydev, RTL8211F_WOL_PAGE,
@@ -267,6 +277,20 @@ static int rtl8211f_probe(struct phy_device *phydev)
 	if (device_property_read_bool(dev, "wakeup-source") &&
 	    phy_interrupt_is_valid(phydev)) {
 		device_set_wakeup_capable(dev, true);
+		if (force_link_poll) {
+			/*
+			 * Link status is polled, so phylib won't use this
+			 * interrupt. Keep it as a wake-only IRQ instead.
+			 */
+			ret = dev_pm_set_dedicated_wake_irq(dev, phydev->irq);
+			if (ret)
+				return dev_err_probe(dev, ret,
+						     "failed to request wake IRQ %d\n",
+						     phydev->irq);
+
+			return devm_add_action_or_reset(dev, rtl8211f_clear_wake_irq, dev);
+		}
+
 		devm_pm_set_wake_irq(dev, phydev->irq);
 	}
 
