@@ -122,6 +122,11 @@
 			reg = <1>;
 			realtek,aldps-enable;
 			realtek,clkout-disable;
+			realtek,link-poll;
+
+			wakeup-source;
+			interrupt-parent = <&pinctrl>;
+			interrupts = <35 IRQ_TYPE_EDGE_FALLING>;
 
 			leds {
 				#address-cells = <1>;
