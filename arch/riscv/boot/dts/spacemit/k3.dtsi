@@ -1413,6 +1413,8 @@
 			sensor_range = <0x0 0x7>;
 			tsensor_map = <1 0 1 1 1 1 1 1>;
 			temperature_offset = <274>;
+			nvmem-cells = <&soc_rtemp_trim>, <&soc_rtemp_trim1>;
+			nvmem-cell-names = "soc_rtemp_trim", "soc_rtemp_trim1";
 			#thermal-sensor-cells = <1>;
 			status = "okay";
 		};

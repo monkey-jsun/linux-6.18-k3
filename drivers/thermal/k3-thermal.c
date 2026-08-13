@@ -9,6 +9,7 @@
 #include <linux/of_device.h>
 #include <linux/thermal.h>
 #include <linux/reset.h>
+#include <linux/nvmem-consumer.h>
 #include "thermal_hwmon.h"
 #include "thermal_core.h"
 #include "k3-thermal.h"
@@ -17,6 +18,10 @@ static int init_sensors(struct platform_device *pdev)
 {
 	int ret;
 	unsigned int val;
+	u8 vref_trim = 0;
+	struct nvmem_cell *cell;
+	void *buf;
+	size_t len;
 	struct k3_thermal_sensor *s = platform_get_drvdata(pdev);
 
 	/* read the sensor range */
@@ -39,19 +44,53 @@ static int init_sensors(struct platform_device *pdev)
 	}
 
 	/* first: disable all the interrupts */
-        writel(0xffffffff, s->base + REG_TSEN_LITE_INT_CLR);
-        writel(0xffffffff, s->base + REG_TSEN_LITE_INT_ENB);
+	writel(0xffffffff, s->base + REG_TSEN_LITE_INT_CLR);
+	writel(0xffffffff, s->base + REG_TSEN_LITE_INT_ENB);
 
-        /* select clk div 26M/4 */
-        val = readl(s->base + REG_TSEN_LITE_CFG);
-        val &= ~BITS_D_CK_DIV_SEL;
-        val |= BITS_CK_DIV_SEL_DIV4;
+	/* select clk div 26M/4 */
+	val = readl(s->base + REG_TSEN_LITE_CFG);
+	val &= ~BITS_D_CK_DIV_SEL;
+	val |= BITS_CK_DIV_SEL_DIV4;
 
-	/* vref calibration */
+	/* vref calibration: read from efuse */
+	/* Try to read soc_rtemp_trim from efuse bank7 first */
+	cell = nvmem_cell_get(&pdev->dev, "soc_rtemp_trim");
+	if (!IS_ERR(cell)) {
+		buf = nvmem_cell_read(cell, &len);
+		nvmem_cell_put(cell);
+		if (!IS_ERR(buf) && len > 0) {
+			vref_trim = *(u8 *)buf;
+			kfree(buf);
+			dev_info(&pdev->dev, "Read soc_rtemp_trim from bank7: 0x%02x\n", vref_trim);
+		}
+	}
+
+	/* If bank7 value < 8(it may has been writen with a invalid value),
+	   try to read soc_rtemp_trim1 from efuse bank0 */
+	if (vref_trim < 8) {
+		cell = nvmem_cell_get(&pdev->dev, "soc_rtemp_trim1");
+		if (!IS_ERR(cell)) {
+			buf = nvmem_cell_read(cell, &len);
+			nvmem_cell_put(cell);
+			if (!IS_ERR(buf) && len > 0) {
+				vref_trim = *(u8 *)buf;
+				kfree(buf);
+				dev_info(&pdev->dev, "Read soc_rtemp_trim1 from bank0: 0x%02x\n", vref_trim);
+			}
+		}
+	}
+
+	/* If still < 8, use default value */
+	if (vref_trim < 8) {
+		vref_trim = CALIB_VREF_DEFAULT;
+		dev_info(&pdev->dev, "Using default vref: 0x%02x\n", vref_trim);
+	}
+
+	/* Apply vref calibration value */
 	val &= ~BITS_D_REG_VREF_CTRL;
-	val |= ((CALIB_VREF_DEFAULT & 0xff) << BITS_D_REG_VREF_OFFSET);
+	val |= ((vref_trim & 0xff) << BITS_D_REG_VREF_OFFSET);
 
-        writel(val, s->base + REG_TSEN_LITE_CFG);
+	writel(val, s->base + REG_TSEN_LITE_CFG);
 
 	return 0;
 }
@@ -172,7 +211,7 @@ static int k3_thermal_probe(struct platform_device *pdev)
 	if (IS_ERR(s->resets))
 		return PTR_ERR(s->resets);
 
-        reset_control_deassert(s->resets);
+	reset_control_deassert(s->resets);
 
 	s->fclk = devm_clk_get(dev, "func");
 	if (IS_ERR(s->fclk))

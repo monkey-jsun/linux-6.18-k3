@@ -2,7 +2,7 @@
 #define __k3_THERMAL_H__
 
 #define MAX_SENSOR_NUMBER		8
-#define CALIB_VREF_DEFAULT		(0x9A)
+#define CALIB_VREF_DEFAULT		(0xD8)
 #define BITS_D_REG_VREF_CTRL		BITS(7, 14)
 #define BITS_D_REG_VREF_OFFSET		(7)
 
