@@ -1413,6 +1413,8 @@
 			sensor_range = <0x0 0x7>;
 			tsensor_map = <1 0 1 1 1 1 1 1>;
 			temperature_offset = <274>;
+			nvmem-cells = <&soc_rtemp_trim>, <&soc_rtemp_trim1>;
+			nvmem-cell-names = "soc_rtemp_trim", "soc_rtemp_trim1";
 			#thermal-sensor-cells = <1>;
 			status = "okay";
 		};
@@ -2683,6 +2685,23 @@
 			ranges = <0 0x0 0xf0702800 0x400>;
 			status = "okay";
 
+			efuse_bank0: efuse_bank@0 {
+				compatible = "spacemit,efuse";
+				#address-cells = <1>;
+				#size-cells = <1>;
+				reg = <0x104 0x20>;
+				resets = <&syscon_apmu RESET_APMU_AES_WTM>;
+				reset-names = "aes_reset";
+				clocks = <&syscon_apmu CLK_APMU_AES_WTM>;
+				clock-names = "aes_core";
+				status = "okay";
+
+				soc_rtemp_trim1: bank0@1c,0 {
+					reg = <0x1C 1>;
+					bits = <0 8>;
+				};
+			};
+
 			efuse_bank7: efuse_bank@7 {
 				compatible = "spacemit,efuse";
 				#address-cells = <1>;
@@ -2722,6 +2741,11 @@
 				soc_chip_id: bank7@17,7 {
 					reg = <0x17 9>;
 					bits = <7 61>;
+				};
+
+				soc_rtemp_trim: bank7@a,4 {
+					reg = <0x0A 2>;
+					bits = <4 8>;
 				};
 			};
 		};

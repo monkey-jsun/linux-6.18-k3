@@ -143,23 +143,23 @@ static int ccic_clk_set_rate(struct ccic_ctrl *ctrl_dev, int mode)
 	// clk_val = clk_round_rate(ccic_dev->csi_clk, 500000000);
 	clk_set_rate(ccic_dev->csi_clk, clk_val);
 	clk_val = clk_get_rate(ccic_dev->csi_clk);
-	pr_info("cam clk[csi_func]: %ld\n", clk_val);
+	pr_debug("cam clk[csi_func]: %ld\n", clk_val);
 
 	clk_val = clk_round_rate(ccic_dev->clk4x, 1000000000);
 	// clk_val = clk_round_rate(ccic_dev->clk4x, 500000000);
 	clk_set_rate(ccic_dev->clk4x, clk_val);
 	clk_val = clk_get_rate(ccic_dev->clk4x);
-	pr_info("cam clk[ccic_func]: %ld\n", clk_val);
+	pr_debug("cam clk[ccic_func]: %ld\n", clk_val);
 
 	clk_val = clk_round_rate(ccic_dev->ahb_clk, 307200000);
 	clk_set_rate(ccic_dev->ahb_clk, clk_val);
 	clk_val = clk_get_rate(ccic_dev->ahb_clk);
-	pr_info("cam clk[ahb_func]: %ld\n", clk_val);
+	pr_debug("cam clk[ahb_func]: %ld\n", clk_val);
 
 	clk_val = clk_round_rate(ccic_dev->axi_clk, 409600000);
 	clk_set_rate(ccic_dev->axi_clk, clk_val);
 	clk_val = clk_get_rate(ccic_dev->axi_clk);
-	pr_info("cam clk[axi_func]: %ld\n", clk_val);
+	pr_debug("cam clk[axi_func]: %ld\n", clk_val);
 	return 0;
 }
 
@@ -193,7 +193,7 @@ static int ccic_clk_enable(struct ccic_ctrl *ctrl, int en)
 			//set mmu timeout default addr
 			mmu_dev->ops->set_timeout_default_addr(mmu_dev, (uint64_t)rsvd_phy_addr);
 #endif
-			dev_info(dev, "power on\n");
+			dev_dbg(dev, "power on\n");
 		}
 		mutex_unlock(&ctrl->lock);
 	} else {
@@ -209,7 +209,7 @@ static int ccic_clk_enable(struct ccic_ctrl *ctrl, int en)
 			reset_control_assert(ccic_dev->ccic_4x_reset);
 			clk_disable_unprepare(ccic_dev->ahb_clk);
 			reset_control_assert(ccic_dev->sc2_hclk_reset);
-			dev_info(dev, "power off\n");
+			dev_dbg(dev, "power off\n");
 		} else if (v < 0) {
 			atomic_inc(&ctrl->usr_cnt);
 			dev_err(dev, "invalid power off\n");

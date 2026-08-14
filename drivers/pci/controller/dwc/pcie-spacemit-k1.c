@@ -868,6 +868,64 @@ static int k1_pcie_disable_wakeup_irq(struct k1_pcie *k1)
 	return 0;
 }
 
+static void k1_pcie_start_link_retry_setup(struct k1_pcie *k1)
+{
+	regmap_clear_bits(k1->pmu, k1->pmu_off + PCIE_CLK_RESET_CONTROL, LTSSM_EN);
+
+#ifdef CONFIG_SOC_SPACEMIT_K3
+	if (k1->pci.pe_rst)
+		gpiod_set_value_cansleep(k1->pci.pe_rst, 1);
+	else
+		regmap_update_bits(k1->pmu, k1->pmu_off + PCIE_CONTROL_LOGIC,
+				   PCIE_PERSTN_OUT | PCIE_PERSTN_OE,
+				   PCIE_PERSTN_OE);
+#endif
+
+	mdelay(PCIE_T_PVPERL_MS);
+
+#ifdef CONFIG_SOC_SPACEMIT_K3
+	if (k1->pci.pe_rst)
+		gpiod_set_value_cansleep(k1->pci.pe_rst, 0);
+	else
+		regmap_update_bits(k1->pmu, k1->pmu_off + PCIE_CONTROL_LOGIC,
+				   PCIE_PERSTN_OUT | PCIE_PERSTN_OE,
+				   PCIE_PERSTN_OUT | PCIE_PERSTN_OE);
+#endif
+
+	mdelay(150);
+	regmap_set_bits(k1->pmu, k1->pmu_off + PCIE_CLK_RESET_CONTROL, LTSSM_EN);
+}
+
+static int k1_pcie_start_link_resume_noirq(struct k1_pcie *k1)
+{
+	struct dw_pcie *pci = &k1->pci;
+	bool retry = true;
+	int ret;
+
+	ret = k1_pcie_start_link(pci);
+	if (ret) {
+		dev_err(pci->dev, "Failed to start link: %d\n", ret);
+		return ret;
+	}
+
+	if (!k1->link_up)
+		return 0;
+
+retry_link:
+	if (dw_pcie_wait_for_link(pci)) {
+		if (!retry)
+			return 0;
+
+		dev_warn(pci->dev, "Link training failed, retrying...\n");
+		k1_pcie_start_link_retry_setup(k1);
+
+		retry = false;
+		goto retry_link;
+	}
+
+	return 0;
+}
+
 static int k1_pcie_suspend_noirq(struct device *dev)
 {
 	struct k1_pcie *k1 = dev_get_drvdata(dev);
@@ -1001,24 +1059,16 @@ static int k1_pcie_resume_noirq(struct device *dev)
 	spacemit_pcie_msi_host_init(&k1->pci.pp);
 	dw_pcie_setup_rc(&pci->pp);
 
-	ret = dw_pcie_start_link(pci);
-	if (ret)
+	ret = k1_pcie_start_link_resume_noirq(k1);
+	if (ret) {
+		dev_err(dev, "Failed to start link: %d\n", ret);
 		goto err_phy_exit;
-
-	if (k1->link_up) {
-		ret = dw_pcie_wait_for_link(pci);
-		if (ret) {
-			dev_err(dev, "failed to wait for link: %d\n", ret);
-			goto err_stop_link;
-		}
 	}
 
 	pci->suspended = false;
 
 	return 0;
 
-err_stop_link:
-	dw_pcie_stop_link(pci);
 err_phy_exit:
 #ifdef CONFIG_SOC_SPACEMIT_K3
 	spacemit_pcie_disable_phy(k1);

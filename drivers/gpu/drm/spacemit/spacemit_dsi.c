@@ -13,6 +13,7 @@
 #include <linux/of_irq.h>
 #include <linux/of_graph.h>
 #include <linux/pm_runtime.h>
+#include <linux/io.h>
 #include <video/mipi_display.h>
 #include <linux/regmap.h>
 
@@ -23,7 +24,43 @@
 #include "spacemit_bootloader.h"
 #include "spacemit_mipi_panel.h"
 
+#define SPACEMIT_DSI_QOS_BASE		0xd4282c00
+#define SPACEMIT_DSI_QOS_SIZE		0x200
+#define SPACEMIT_DSI_QOS_MUX_CTRL	0x12c
+#define SPACEMIT_DSI_QOS_MUX_DPU0	BIT(8)
+
 LIST_HEAD(dsi_core_head);
+
+static const struct regmap_config spacemit_dsi_qos_regmap_config = {
+	.reg_bits = 32,
+	.val_bits = 32,
+	.reg_stride = 4,
+	.max_register = SPACEMIT_DSI_QOS_SIZE - 4,
+};
+
+static int spacemit_dsi_select_dpu_mux(struct device *dev)
+{
+	void __iomem *regs;
+	struct regmap *qos;
+	int ret;
+
+	regs = devm_ioremap(dev, SPACEMIT_DSI_QOS_BASE, SPACEMIT_DSI_QOS_SIZE);
+	if (!regs)
+		return -ENOMEM;
+
+	qos = devm_regmap_init_mmio(dev, regs, &spacemit_dsi_qos_regmap_config);
+	if (IS_ERR(qos)) {
+		dev_err(dev, "Failed to regmap QoS\n");
+		return PTR_ERR(qos);
+	}
+
+	ret = regmap_update_bits(qos, SPACEMIT_DSI_QOS_MUX_CTRL,
+				 SPACEMIT_DSI_QOS_MUX_DPU0, 0);
+	if (ret)
+		dev_err(dev, "Failed to mux dsi %d\n", ret);
+
+	return ret;
+}
 
 static void spacemit_dsi_encoder_enable(struct drm_encoder *encoder)
 {
@@ -892,6 +929,10 @@ static int spacemit_dsi_probe(struct platform_device *pdev)
 	ret = spacemit_dsi_context_init(dsi, np);
 	if (ret)
 		return -EINVAL;
+
+	ret = spacemit_dsi_select_dpu_mux(&pdev->dev);
+	if (ret)
+		return ret;
 
 	spacemit_dsi_device_create(dsi, &pdev->dev);
 	spacemit_dsi_sysfs_init(&dsi->dev);

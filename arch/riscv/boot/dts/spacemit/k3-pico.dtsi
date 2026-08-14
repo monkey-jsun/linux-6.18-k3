@@ -624,8 +624,6 @@
 	snps,reset-gpios = <&gpio 0 15 GPIO_ACTIVE_LOW>;
 	snps,reset-delays-us = <0 20000 100000>;
 
-	spacemit,wake-irq-enable;
-
 	spacemit,clk-tuning-enable;
 	spacemit,clk-tuning-by-delayline;
 	spacemit,tx-phase = <73>;
@@ -644,6 +642,11 @@
 			reg = <1>;
 			realtek,aldps-enable;
 			realtek,clkout-disable;
+			realtek,link-poll;
+
+			wakeup-source;
+			interrupt-parent = <&pinctrl>;
+			interrupts = <14 IRQ_TYPE_EDGE_FALLING>;
 
 			leds {
 				#address-cells = <1>;

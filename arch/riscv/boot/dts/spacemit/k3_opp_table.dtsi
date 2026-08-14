@@ -1,8 +1,22 @@
 // SPDX-License-Identifier: (GPL-2.0 OR MIT)
 /* Copyright (c) 2023 Spacemit, Inc */
 
+/*
+ * K3 X100 CPU OPP tables — two tables for different PMIC solutions:
+ *   table0 (index 0) — spacemit,tda38740 and other PMICs (default)
+ *   table1 (index 1) — spacemit,au4562
+ *
+ * Non-boost frequencies: fixed voltage managed by OPP framework
+ *   tda38740/others: 0.95 V
+ *   au4562:          0.91 V
+ * Boost frequencies: kernel adjusts voltage via rpmi_regulator (edcdc1)
+ *   2.2 GHz -> 0.95 V
+ *   2.3 GHz -> 1.0 V
+ *   2.4 GHz -> 1.0 V
+ */
+
 &cpus {
-	/* SVT 201~207: 201 < SVT <= 207 */
+	/* Table 0: tda38740 and default PMIC solutions (non-boost @ 0.95V) */
 	clst_core_opp_table0_x100: opp_table0_x100 {
 		compatible = "operating-points-v2";
 		opp-shared;
@@ -12,122 +26,123 @@
 
 		opp2400000000 {
 			opp-hz = /bits/ 64 <2400000000>, /bits/ 64 <2400000000>;
-			opp-microvolt = <1090000 1090000 1094000>;
+			opp-microvolt = <1000000 1000000 1004000>;
 			clock-latency-ns = <200000>;
 			turbo-mode;
 		};
 
 		opp2300000000 {
 			opp-hz = /bits/ 64 <2300000000>, /bits/ 64 <2300000000>;
-			opp-microvolt = <1090000 1090000 1094000>;
+			opp-microvolt = <1000000 1000000 1004000>;
 			clock-latency-ns = <200000>;
 			turbo-mode;
 		};
 
 		opp2200000000 {
 			opp-hz = /bits/ 64 <2200000000>, /bits/ 64 <2200000000>;
-			opp-microvolt = <960000 960000 964000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
+			turbo-mode;
 		};
 
 		opp2150000000 {
 			opp-hz = /bits/ 64 <2150000000>, /bits/ 64 <2150000000>;
-			opp-microvolt = <960000 960000 964000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp2100000000 {
 			opp-hz = /bits/ 64 <2100000000>, /bits/ 64 <2100000000>;
-			opp-microvolt = <960000 960000 964000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp2000000000 {
 			opp-hz = /bits/ 64 <2000000000>, /bits/ 64 <2000000000>;
-			opp-microvolt = <880000 880000 884000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1900000000 {
 			opp-hz = /bits/ 64 <1900000000>, /bits/ 64 <1900000000>;
-			opp-microvolt = <880000 880000 884000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1850000000 {
 			opp-hz = /bits/ 64 <1850000000>, /bits/ 64 <1850000000>;
-			opp-microvolt = <880000 880000 884000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1800000000 {
 			opp-hz = /bits/ 64 <1800000000>, /bits/ 64 <1800000000>;
-			opp-microvolt = <810000 810000 814000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1700000000 {
 			opp-hz = /bits/ 64 <1700000000>, /bits/ 64 <1700000000>;
-			opp-microvolt = <810000 810000 814000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1600000000 {
 			opp-hz = /bits/ 64 <1600000000>, /bits/ 64 <1600000000>;
-			opp-microvolt = <760000 760000 764000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1500000000 {
 			opp-hz = /bits/ 64 <1500000000>, /bits/ 64 <1500000000>;
-			opp-microvolt = <760000 760000 764000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1400000000 {
 			opp-hz = /bits/ 64 <1400000000>, /bits/ 64 <1400000000>;
-			opp-microvolt = <720000 720000 724000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1300000000 {
 			opp-hz = /bits/ 64 <1300000000>, /bits/ 64 <1300000000>;
-			opp-microvolt = <720000 720000 724000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1200000000 {
 			opp-hz = /bits/ 64 <1200000000>, /bits/ 64 <1200000000>;
-			opp-microvolt = <720000 720000 724000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1100000000 {
 			opp-hz = /bits/ 64 <1100000000>, /bits/ 64 <1100000000>;
-			opp-microvolt = <720000 720000 724000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1000000000 {
 			opp-hz = /bits/ 64 <1000000000>, /bits/ 64 <1000000000>;
-			opp-microvolt = <720000 720000 724000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp819000000 {
 			opp-hz = /bits/ 64 <819200000>, /bits/ 64 <819200000>;
-			opp-microvolt = <720000 720000 724000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp614400000 {
 			opp-hz = /bits/ 64 <614400000>, /bits/ 64 <614400000>;
-			opp-microvolt = <720000 720000 724000>;
+			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
 		};
 	};
 
-	/* SVT 207~211: 207 < SVT <= 211 */
+	/* Table 1: au4562 PMIC solution (non-boost @ 0.91V) */
 	clst_core_opp_table1_x100: opp_table1_x100 {
 		compatible = "operating-points-v2";
 		opp-shared;
@@ -137,255 +152,6 @@
 
 		opp2400000000 {
 			opp-hz = /bits/ 64 <2400000000>, /bits/ 64 <2400000000>;
-			opp-microvolt = <1050000 1050000 1054000>;
-			clock-latency-ns = <200000>;
-			turbo-mode;
-		};
-
-		opp2300000000 {
-			opp-hz = /bits/ 64 <2300000000>, /bits/ 64 <2300000000>;
-			opp-microvolt = <1050000 1050000 1054000>;
-			clock-latency-ns = <200000>;
-			turbo-mode;
-		};
-
-		opp2200000000 {
-			opp-hz = /bits/ 64 <2200000000>, /bits/ 64 <2200000000>;
-			opp-microvolt = <950000 950000 954000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp2150000000 {
-			opp-hz = /bits/ 64 <2150000000>, /bits/ 64 <2150000000>;
-			opp-microvolt = <950000 950000 954000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp2100000000 {
-			opp-hz = /bits/ 64 <2100000000>, /bits/ 64 <2100000000>;
-			opp-microvolt = <950000 950000 954000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp2000000000 {
-			opp-hz = /bits/ 64 <2000000000>, /bits/ 64 <2000000000>;
-			opp-microvolt = <870000 870000 874000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1900000000 {
-			opp-hz = /bits/ 64 <1900000000>, /bits/ 64 <1900000000>;
-			opp-microvolt = <870000 870000 874000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1850000000 {
-			opp-hz = /bits/ 64 <1850000000>, /bits/ 64 <1850000000>;
-			opp-microvolt = <870000 870000 874000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1800000000 {
-			opp-hz = /bits/ 64 <1800000000>, /bits/ 64 <1800000000>;
-			opp-microvolt = <810000 810000 814000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1700000000 {
-			opp-hz = /bits/ 64 <1700000000>, /bits/ 64 <1700000000>;
-			opp-microvolt = <810000 810000 814000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1600000000 {
-			opp-hz = /bits/ 64 <1600000000>, /bits/ 64 <1600000000>;
-			opp-microvolt = <750000 750000 754000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1500000000 {
-			opp-hz = /bits/ 64 <1500000000>, /bits/ 64 <1500000000>;
-			opp-microvolt = <750000 750000 754000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1400000000 {
-			opp-hz = /bits/ 64 <1400000000>, /bits/ 64 <1400000000>;
-			opp-microvolt = <720000 720000 724000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1300000000 {
-			opp-hz = /bits/ 64 <1300000000>, /bits/ 64 <1300000000>;
-			opp-microvolt = <720000 720000 724000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1200000000 {
-			opp-hz = /bits/ 64 <1200000000>, /bits/ 64 <1200000000>;
-			opp-microvolt = <720000 720000 724000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1100000000 {
-			opp-hz = /bits/ 64 <1100000000>, /bits/ 64 <1100000000>;
-			opp-microvolt = <720000 720000 724000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1000000000 {
-			opp-hz = /bits/ 64 <1000000000>, /bits/ 64 <1000000000>;
-			opp-microvolt = <720000 720000 724000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp819000000 {
-			opp-hz = /bits/ 64 <819200000>, /bits/ 64 <819200000>;
-			opp-microvolt = <720000 720000 724000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp614400000 {
-			opp-hz = /bits/ 64 <614400000>, /bits/ 64 <614400000>;
-			opp-microvolt = <720000 720000 724000>;
-			clock-latency-ns = <200000>;
-		};
-	};
-
-	/* SVT 211+: SVT > 211 */
-	clst_core_opp_table2_x100: opp_table2_x100 {
-		compatible = "operating-points-v2";
-		opp-shared;
-
-		clocks = <&pll CLK_PLL3>, <&pll CLK_PLL4>, <&pll CLK_PLL3_D1>, <&syscon_apmu CLK_APMU_CPU_C1_PLL_SRC>;
-		clock-names = "pll_clst0", "pll_clst1", "pll_src", "clt_pll_src";
-
-		opp2400000000 {
-			opp-hz = /bits/ 64 <2400000000>, /bits/ 64 <2400000000>;
-			opp-microvolt = <1040000 1040000 1044000>;
-			clock-latency-ns = <200000>;
-			turbo-mode;
-		};
-
-		opp2300000000 {
-			opp-hz = /bits/ 64 <2300000000>, /bits/ 64 <2300000000>;
-			opp-microvolt = <1040000 1040000 1044000>;
-			clock-latency-ns = <200000>;
-			turbo-mode;
-		};
-
-		opp2200000000 {
-			opp-hz = /bits/ 64 <2200000000>, /bits/ 64 <2200000000>;
-			opp-microvolt = <940000 940000 944000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp2150000000 {
-			opp-hz = /bits/ 64 <2150000000>, /bits/ 64 <2150000000>;
-			opp-microvolt = <940000 940000 944000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp2100000000 {
-			opp-hz = /bits/ 64 <2100000000>, /bits/ 64 <2100000000>;
-			opp-microvolt = <940000 940000 944000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp2000000000 {
-			opp-hz = /bits/ 64 <2000000000>, /bits/ 64 <2000000000>;
-			opp-microvolt = <860000 860000 864000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1900000000 {
-			opp-hz = /bits/ 64 <1900000000>, /bits/ 64 <1900000000>;
-			opp-microvolt = <860000 860000 864000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1850000000 {
-			opp-hz = /bits/ 64 <1850000000>, /bits/ 64 <1850000000>;
-			opp-microvolt = <860000 860000 864000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1800000000 {
-			opp-hz = /bits/ 64 <1800000000>, /bits/ 64 <1800000000>;
-			opp-microvolt = <800000 800000 804000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1700000000 {
-			opp-hz = /bits/ 64 <1700000000>, /bits/ 64 <1700000000>;
-			opp-microvolt = <800000 800000 804000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1600000000 {
-			opp-hz = /bits/ 64 <1600000000>, /bits/ 64 <1600000000>;
-			opp-microvolt = <750000 750000 754000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1500000000 {
-			opp-hz = /bits/ 64 <1500000000>, /bits/ 64 <1500000000>;
-			opp-microvolt = <750000 750000 754000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1400000000 {
-			opp-hz = /bits/ 64 <1400000000>, /bits/ 64 <1400000000>;
-			opp-microvolt = <720000 720000 724000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1300000000 {
-			opp-hz = /bits/ 64 <1300000000>, /bits/ 64 <1300000000>;
-			opp-microvolt = <720000 720000 724000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1200000000 {
-			opp-hz = /bits/ 64 <1200000000>, /bits/ 64 <1200000000>;
-			opp-microvolt = <720000 720000 724000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1100000000 {
-			opp-hz = /bits/ 64 <1100000000>, /bits/ 64 <1100000000>;
-			opp-microvolt = <720000 720000 724000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp1000000000 {
-			opp-hz = /bits/ 64 <1000000000>, /bits/ 64 <1000000000>;
-			opp-microvolt = <720000 720000 724000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp819000000 {
-			opp-hz = /bits/ 64 <819200000>, /bits/ 64 <819200000>;
-			opp-microvolt = <720000 720000 724000>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp614400000 {
-			opp-hz = /bits/ 64 <614400000>, /bits/ 64 <614400000>;
-			opp-microvolt = <720000 720000 724000>;
-			clock-latency-ns = <200000>;
-		};
-	};
-
-	clst_core_opp_table3_x100: opp_table3_x100 {
-		compatible = "operating-points-v2";
-		opp-shared;
-
-		clocks = <&pll CLK_PLL3>, <&pll CLK_PLL4>, <&pll CLK_PLL3_D1>, <&syscon_apmu CLK_APMU_CPU_C1_PLL_SRC>;
-		clock-names = "pll_clst0", "pll_clst1", "pll_src", "clt_pll_src";
-
-		opp2400000000 {
-			opp-hz = /bits/ 64 <2400000000>, /bits/ 64 <2400000000>;
 			opp-microvolt = <1000000 1000000 1004000>;
 			clock-latency-ns = <200000>;
 			turbo-mode;
@@ -393,8 +159,8 @@
 
 		opp2300000000 {
 			opp-hz = /bits/ 64 <2300000000>, /bits/ 64 <2300000000>;
-			clock-latency-ns = <200000>;
 			opp-microvolt = <1000000 1000000 1004000>;
+			clock-latency-ns = <200000>;
 			turbo-mode;
 		};
 
@@ -402,101 +168,102 @@
 			opp-hz = /bits/ 64 <2200000000>, /bits/ 64 <2200000000>;
 			opp-microvolt = <950000 950000 954000>;
 			clock-latency-ns = <200000>;
+			turbo-mode;
 		};
 
 		opp2150000000 {
 			opp-hz = /bits/ 64 <2150000000>, /bits/ 64 <2150000000>;
-			opp-microvolt = <880000 880000 884000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp2100000000 {
 			opp-hz = /bits/ 64 <2100000000>, /bits/ 64 <2100000000>;
-			opp-microvolt = <880000 880000 884000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp2000000000 {
 			opp-hz = /bits/ 64 <2000000000>, /bits/ 64 <2000000000>;
-			opp-microvolt = <880000 880000 884000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1900000000 {
 			opp-hz = /bits/ 64 <1900000000>, /bits/ 64 <1900000000>;
-			opp-microvolt = <880000 880000 884000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1850000000 {
 			opp-hz = /bits/ 64 <1850000000>, /bits/ 64 <1850000000>;
-			opp-microvolt = <880000 880000 884000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1800000000 {
 			opp-hz = /bits/ 64 <1800000000>, /bits/ 64 <1800000000>;
-			opp-microvolt = <880000 880000 884000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1700000000 {
 			opp-hz = /bits/ 64 <1700000000>, /bits/ 64 <1700000000>;
-			opp-microvolt = <880000 880000 884000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1600000000 {
 			opp-hz = /bits/ 64 <1600000000>, /bits/ 64 <1600000000>;
-			opp-microvolt = <880000 880000 884000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1500000000 {
 			opp-hz = /bits/ 64 <1500000000>, /bits/ 64 <1500000000>;
-			opp-microvolt = <850000 850000 854000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1400000000 {
 			opp-hz = /bits/ 64 <1400000000>, /bits/ 64 <1400000000>;
-			opp-microvolt = <850000 850000 854000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1300000000 {
 			opp-hz = /bits/ 64 <1300000000>, /bits/ 64 <1300000000>;
-			opp-microvolt = <850000 850000 854000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1200000000 {
 			opp-hz = /bits/ 64 <1200000000>, /bits/ 64 <1200000000>;
-			opp-microvolt = <850000 850000 854000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1100000000 {
 			opp-hz = /bits/ 64 <1100000000>, /bits/ 64 <1100000000>;
-			opp-microvolt = <850000 850000 854000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp1000000000 {
 			opp-hz = /bits/ 64 <1000000000>, /bits/ 64 <1000000000>;
-			opp-microvolt = <800000 800000 804000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp819000000 {
 			opp-hz = /bits/ 64 <819200000>, /bits/ 64 <819200000>;
-			opp-microvolt = <800000 800000 804000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 
 		opp614400000 {
 			opp-hz = /bits/ 64 <614400000>, /bits/ 64 <614400000>;
-			opp-microvolt = <800000 800000 804000>;
+			opp-microvolt = <910000 910000 914000>;
 			clock-latency-ns = <200000>;
 		};
 	};
@@ -586,56 +353,56 @@
 	clst-supply = <&edcdc1>;
 	clocks = <&syscon_apmu CLK_APMU_CPU_C0_CORE>, <&syscon_apmu CLK_APMU_CPU_C1_CORE>;
 	clock-names = "cls0", "cls1";
-	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>, <&clst_core_opp_table2_x100>, <&clst_core_opp_table3_x100>;
+	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>;
 };
 
 &cpu_1 {
 	clst-supply = <&edcdc1>;
 	clocks = <&syscon_apmu CLK_APMU_CPU_C0_CORE>, <&syscon_apmu CLK_APMU_CPU_C1_CORE>;
 	clock-names = "cls0", "cls1";
-	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>, <&clst_core_opp_table2_x100>, <&clst_core_opp_table3_x100>;
+	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>;
 };
 
 &cpu_2 {
 	clst-supply = <&edcdc1>;
 	clocks = <&syscon_apmu CLK_APMU_CPU_C0_CORE>, <&syscon_apmu CLK_APMU_CPU_C1_CORE>;
 	clock-names = "cls0", "cls1";
-	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>, <&clst_core_opp_table2_x100>, <&clst_core_opp_table3_x100>;
+	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>;
 };
 
 &cpu_3 {
 	clst-supply = <&edcdc1>;
 	clocks = <&syscon_apmu CLK_APMU_CPU_C0_CORE>, <&syscon_apmu CLK_APMU_CPU_C1_CORE>;
 	clock-names = "cls0", "cls1";
-	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>, <&clst_core_opp_table2_x100>, <&clst_core_opp_table3_x100>;
+	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>;
 };
 
 &cpu_4 {
 	clst-supply = <&edcdc1>;
 	clocks = <&syscon_apmu CLK_APMU_CPU_C0_CORE>, <&syscon_apmu CLK_APMU_CPU_C1_CORE>;
 	clock-names = "cls0", "cls1";
-	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>, <&clst_core_opp_table2_x100>, <&clst_core_opp_table3_x100>;
+	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>;
 };
 
 &cpu_5 {
 	clst-supply = <&edcdc1>;
 	clocks = <&syscon_apmu CLK_APMU_CPU_C0_CORE>, <&syscon_apmu CLK_APMU_CPU_C1_CORE>;
 	clock-names = "cls0", "cls1";
-	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>, <&clst_core_opp_table2_x100>, <&clst_core_opp_table3_x100>;
+	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>;
 };
 
 &cpu_6 {
 	clst-supply = <&edcdc1>;
 	clocks = <&syscon_apmu CLK_APMU_CPU_C0_CORE>, <&syscon_apmu CLK_APMU_CPU_C1_CORE>;
 	clock-names = "cls0", "cls1";
-	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>, <&clst_core_opp_table2_x100>, <&clst_core_opp_table3_x100>;
+	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>;
 };
 
 &cpu_7 {
 	clst-supply = <&edcdc1>;
 	clocks = <&syscon_apmu CLK_APMU_CPU_C0_CORE>, <&syscon_apmu CLK_APMU_CPU_C1_CORE>;
 	clock-names = "cls0", "cls1";
-	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>, <&clst_core_opp_table2_x100>, <&clst_core_opp_table3_x100>;
+	operating-points-v2 = <&clst_core_opp_table0_x100>, <&clst_core_opp_table1_x100>;
 };
 
 &cpu_8 {

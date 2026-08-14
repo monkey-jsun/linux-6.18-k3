@@ -9,7 +9,6 @@
 #include <linux/pm_qos.h>
 #include <linux/notifier.h>
 #include <linux/platform_device.h>
-#include <linux/regulator/consumer.h>
 #include <linux/mutex.h>
 #include <linux/pm_opp.h>
 #include <linux/device.h>
@@ -18,26 +17,17 @@
 #include "../opp/opp.h"
 #include "cpufreq-dt.h"
 
-#define USING_OPP_TABLE3_BY_DEFAULT
-
 #define TURBO0_FREQUENCY		(1000000000)
 #define STABLE_FREQUENCY		(819200000)
 
 /*
- * SVT-DRO thresholds for OPP table selection:
- *   table0: SVT-DRO <= 207  (201 < SVT <= 207)
- *   table1: SVT-DRO <= 211  (207 < SVT <= 211)
- *   table2: SVT-DRO >  211
+ * OPP table index selection by PMIC solution:
+ *   index 0 — spacemit,tda38740  (X100 rated 0.95 V, default)
+ *   index 1 — spacemit,au4562   (X100 rated 0.90 V)
+ *
+ * The U-Boot ft_board_cpu_fixup() writes "pmic-compatible" into /cpus
+ * from the board EEPROM TLV_CODE_PMIC_TYPE field.  We read that here.
  */
-#define SVT_DRO_THRESHOLD_0		(207)
-#define SVT_DRO_THRESHOLD_1		(211)
-
-#define FREQ_TABLE_0			(0)
-#define FREQ_TABLE_1			(1)
-#define FREQ_TABLE_2			(2)
-#define FREQ_TABLE_3			(3)
-
-#define REGULATOR_MAX_UV_THRESHOLD	(1100000)
 
 static int spacemit_processor_notifier(struct notifier_block *nb,
                                   unsigned long event, void *data)
@@ -47,23 +37,12 @@ static int spacemit_processor_notifier(struct notifier_block *nb,
 	struct cpufreq_freqs *freqs = (struct cpufreq_freqs *)data;
 	struct cpufreq_policy *policy = ( struct cpufreq_policy *)freqs->policy;
 	struct opp_table *opp_table;
-	struct device_node *np;
 	struct clk *pll_clst0, *pll_clst1, *pll_src, *clt_pll_src;
-	u64 rates;
-	u32 microvol;
 	int i;
 
 	cpu = cpumask_first(policy->related_cpus);
 	cpu_dev = get_cpu_device(cpu);
 	opp_table = _find_opp_table(cpu_dev);
-
-	for_each_available_child_of_node(opp_table->np, np) {
-		of_property_read_u64_array(np, "opp-hz", &rates, 1);
-		if (rates == freqs->new * 1000) {
-			of_property_read_u32(np, "opp-microvolt", &microvol);
-			break;
-		}
-	}
 
 	/* get the pll clk handler */
 	pll_clst0 = of_clk_get_by_name(opp_table->np, "pll_clst0");
@@ -139,7 +118,7 @@ static struct notifier_block spacemit_policy_notifier_block = {
 /*
  * Custom indexed OPP sharing helpers — mirrors the K1X approach so each
  * CPU can carry multiple operating-points-v2 phandles and the driver picks
- * the right one at boot based on SVT-DRO.
+ * the right one at boot based on PMIC type.
  */
 static int _dev_pm_opp_of_get_sharing_cpus(struct device *cpu_dev,
 				   struct cpumask *cpumask, int index)
@@ -325,70 +304,30 @@ static struct cpufreq_dt_platform_data spacemit_cpufreq_dt_pdata = {
 static int spacemit_dt_cpufreq_pre_probe(struct platform_device *pdev)
 {
 	int cpu, ret = 0;
-	int index = FREQ_TABLE_0;
-	struct device_node *cpus;
-	u32 svt_dro = 0;
+	int x100_index = 0;
+	struct device_node *cpus_np;
+	const char *pmic_compat = NULL;
 
 	if (strncmp(pdev->name, "cpufreq-dt", 10) != 0)
 		return 0;
 
 	pdev->dev.platform_data = &spacemit_cpufreq_dt_pdata;
 
-	cpus = of_find_node_by_path("/cpus");
-	if (!cpus || of_property_read_u32(cpus, "svt-dro", &svt_dro)) {
-		pr_info("Spacemit K3: no 'svt-dro' in DTS, using default OPP table0\n");
-		svt_dro = 0;
-	}
-	of_node_put(cpus);
-
-	if (svt_dro <= SVT_DRO_THRESHOLD_0)
-		index = FREQ_TABLE_0;
-	else if (svt_dro <= SVT_DRO_THRESHOLD_1)
-		index = FREQ_TABLE_1;
-	else
-		index = FREQ_TABLE_2;
-
-	pr_info("Spacemit K3: SVT-DRO=%u, selecting OPP table%d\n", svt_dro, index);
-
-	/*
-	 * Override to table3 when the core regulator max voltage is below
-	 * 1.1 V — covers both rpmi_regulator edcdc1 and adcdc1.
-	 */
-	{
-		static const char * const reg_paths[] = {
-			"/soc/rpmi_regulator@0/edcdc1",
-			"/soc/rpmi_regulator@0/adcdc1",
-		};
-		int i;
-
-		for (i = 0; i < ARRAY_SIZE(reg_paths); i++) {
-			struct device_node *reg_np;
-			u32 max_uv = 0;
-
-			reg_np = of_find_node_by_path(reg_paths[i]);
-			if (!reg_np)
-				continue;
-
-			if (!of_property_read_u32(reg_np, "regulator-max-microvolt", &max_uv) &&
-			    max_uv < REGULATOR_MAX_UV_THRESHOLD) {
-				pr_info("Spacemit K3: %s max-microvolt=%u < %u, overriding to OPP table3\n",
-					reg_paths[i], max_uv, REGULATOR_MAX_UV_THRESHOLD);
-				of_node_put(reg_np);
-				index = FREQ_TABLE_3;
-				break;
-			}
-			of_node_put(reg_np);
-		}
+	cpus_np = of_find_node_by_path("/cpus");
+	if (cpus_np) {
+		of_property_read_string(cpus_np, "pmic-compatible", &pmic_compat);
+		of_node_put(cpus_np);
 	}
 
-#ifdef USING_OPP_TABLE3_BY_DEFAULT
-	index = FREQ_TABLE_3;
-	pr_info("Spacemit K3: SVT-DRO=%u, overriding to OPP table%d\n", svt_dro, index);
-#endif
+	if (pmic_compat && strcmp(pmic_compat, "spacemit,au4562") == 0)
+		x100_index = 1;
+
+	pr_info("Spacemit K3: pmic-compatible=\"%s\", using X100 OPP table%d\n",
+		pmic_compat ? pmic_compat : "(none)", x100_index);
 
 	for_each_possible_cpu(cpu) {
 		/* A100 cluster (cpu8+) only has a single OPP table */
-		int cpu_index = (cpu >= 8) ? FREQ_TABLE_0 : index;
+		int cpu_index = (cpu >= 8) ? 0 : x100_index;
 
 		ret = spacemit_dt_cpufreq_pre_early_init(&pdev->dev, cpu, cpu_index);
 		if (ret)
